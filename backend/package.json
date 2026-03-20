@@ -21,7 +21,7 @@
     "helmet": "^7.0.0",
     "jsonwebtoken": "^9.0.0",
     "morgan": "^1.10.0",
-    "node-tar": "^6.2.0",
+    "tar": "^6.2.0",
     "qrcode": "^1.5.0",
     "simple-git": "^3.22.0",
     "socket.io": "^4.6.0",
