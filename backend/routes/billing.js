@@ -2,9 +2,9 @@
  * backend/routes/billing.js
  *
  * Stripe billing endpoints:
- *   GET  /api/billing/invoices          Paginated invoice history
- *   GET  /api/billing/summary           Total spend + per-plan breakdown
- *   GET  /api/billing/portal            Create a Stripe Customer Portal session
+ *   GET  /api/billing/invoices
+ *   GET  /api/billing/summary
+ *   GET  /api/billing/portal
  */
 
 'use strict';
@@ -12,20 +12,16 @@
 const { Router } = require('express');
 const Stripe     = require('stripe');
 const supabase   = require('../utils/database');
-const { authMiddleware } = require('../middleware/auth');
+const auth       = require('../middleware/auth');
 const logger     = require('../utils/logger');
 
 const router = Router();
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 
 // All billing routes require authentication
-router.use(authMiddleware);
+router.use(auth);
 
-// ─── GET /api/billing/invoices ────────────────────────────────────────────────
-/**
- * Returns paginated list of the user's migration payments from the migrations table.
- * Query params: page (1-based), limit (default 10, max 50)
- */
+// GET /api/billing/invoices
 router.get('/invoices', async (req, res, next) => {
   try {
     const page  = Math.max(1, parseInt(req.query.page)  || 1);
@@ -36,7 +32,7 @@ router.get('/invoices', async (req, res, next) => {
     const { data, count, error } = await supabase
       .from('migrations')
       .select('id, repo_url, plan, status, amount_charged, amount_refunded, currency, stripe_payment_intent_id, created_at', { count: 'exact' })
-      .eq('user_id', req.user.id)
+      .eq('user_id', req.userId)
       .in('status', ['success', 'failed', 'refunded'])
       .gt('amount_charged', 0)
       .order('created_at', { ascending: false })
@@ -45,16 +41,16 @@ router.get('/invoices', async (req, res, next) => {
     if (error) throw error;
 
     const invoices = (data || []).map(m => ({
-      id:                    m.id,
-      repoUrl:               m.repo_url,
-      plan:                  m.plan,
-      status:                m.status,
-      amountCharged:         m.amount_charged,
-      amountRefunded:        m.amount_refunded,
-      netCharged:            m.amount_charged - (m.amount_refunded || 0),
-      currency:              m.currency || 'usd',
-      paymentIntentId:       m.stripe_payment_intent_id,
-      date:                  m.created_at,
+      id:              m.id,
+      repoUrl:         m.repo_url,
+      plan:            m.plan,
+      status:          m.status,
+      amountCharged:   m.amount_charged,
+      amountRefunded:  m.amount_refunded,
+      netCharged:      m.amount_charged - (m.amount_refunded || 0),
+      currency:        m.currency || 'usd',
+      paymentIntentId: m.stripe_payment_intent_id,
+      date:            m.created_at,
     }));
 
     res.json({
@@ -72,16 +68,13 @@ router.get('/invoices', async (req, res, next) => {
   }
 });
 
-// ─── GET /api/billing/summary ─────────────────────────────────────────────────
-/**
- * Returns total spend, refund total, and per-plan breakdown.
- */
+// GET /api/billing/summary
 router.get('/summary', async (req, res, next) => {
   try {
     const { data, error } = await supabase
       .from('migrations')
       .select('plan, amount_charged, amount_refunded, status')
-      .eq('user_id', req.user.id)
+      .eq('user_id', req.userId)
       .gt('amount_charged', 0);
 
     if (error) throw error;
@@ -112,17 +105,13 @@ router.get('/summary', async (req, res, next) => {
   }
 });
 
-// ─── GET /api/billing/portal ──────────────────────────────────────────────────
-/**
- * Creates a Stripe Customer Portal session for the authenticated user.
- * Requires the user to have a stripe_customer_id.
- */
+// GET /api/billing/portal
 router.get('/portal', async (req, res, next) => {
   try {
     const { data: user, error } = await supabase
       .from('users')
       .select('stripe_customer_id')
-      .eq('id', req.user.id)
+      .eq('id', req.userId)
       .single();
 
     if (error || !user) return res.status(404).json({ error: 'User not found' });
