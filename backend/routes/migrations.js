@@ -1,13 +1,17 @@
 /**
  * backend/routes/migrations.js
- * Migration CRUD and job management
+ * Migration CRUD and job management.
+ * source_platform is stored and forwarded to the queue job so
+ * migrationRunner always knows which service to use for cloning.
  */
 const express = require('express');
-const router = express.Router();
-const auth = require('../middleware/auth');
+const router  = express.Router();
+const auth    = require('../middleware/auth');
 const { supabaseAdmin } = require('../utils/supabase');
 const { addMigrationJob } = require('../utils/queue');
 const AnalyzerAgent = require('../../agent/analyzer');
+
+const VALID_SOURCES = ['github', 'replit', 'emergent', 'url'];
 
 // GET /api/migrations
 router.get('/', auth, async (req, res) => {
@@ -43,16 +47,42 @@ router.get('/:id', auth, async (req, res) => {
 // POST /api/migrations
 router.post('/', auth, async (req, res) => {
   try {
-    const { repourl, branch = 'main', source_platform = 'github', tier = 'standard' } = req.body;
-    if (!repourl) return res.status(400).json({ error: 'repourl is required' });
+    const {
+      repourl,
+      branch          = 'main',
+      source_platform = 'github',
+      tier            = 'standard',
+      replit_token,   // optional: one-time Replit token (never persisted to DB)
+    } = req.body;
+
+    if (!repourl) {
+      return res.status(400).json({ error: 'repourl is required' });
+    }
+    if (!VALID_SOURCES.includes(source_platform)) {
+      return res.status(400).json({ error: `source_platform must be one of: ${VALID_SOURCES.join(', ')}` });
+    }
 
     const { data, error } = await supabaseAdmin
       .from('migrations')
-      .insert([{ user_id: req.userId, repourl, branch, source_platform, tier, status: 'pending' }])
+      .insert([{
+        user_id:         req.userId,
+        repourl,
+        branch,
+        source_platform,
+        tier,
+        status:          'pending',
+      }])
       .select()
       .single();
     if (error) throw error;
-    res.status(201).json({ migration: data });
+
+    // Return replit_token in response so the frontend can pass it to /start;
+    // we never write it to the DB — it lives only in memory for the job lifetime.
+    res.status(201).json({
+      migration:    data,
+      // Echo back so client can include in the /start payload
+      replit_token: source_platform === 'replit' ? (replit_token || null) : undefined,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -100,10 +130,20 @@ router.post('/:id/start', auth, async (req, res) => {
       .eq('user_id', req.userId)
       .single();
     if (error || !migration) return res.status(404).json({ error: 'Migration not found' });
-    if (migration.status !== 'paid') return res.status(400).json({ error: 'Migration must be paid before starting' });
+    if (migration.status !== 'paid') {
+      return res.status(400).json({ error: 'Migration must be paid before starting' });
+    }
 
     await supabaseAdmin.from('migrations').update({ status: 'deploying' }).eq('id', migration.id);
-    await addMigrationJob(migration);
+
+    // replit_token is passed in body from the frontend (never stored in DB)
+    // It gets injected into job.data so the runner can authenticate with Replit.
+    const jobData = { ...migration };
+    if (migration.source_platform === 'replit' && req.body.replit_token) {
+      jobData.replitToken = req.body.replit_token;
+    }
+
+    await addMigrationJob(jobData);
 
     res.json({ message: 'Migration job queued', migrationId: migration.id });
   } catch (err) {
