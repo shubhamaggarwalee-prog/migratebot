@@ -1,6 +1,6 @@
 /**
  * frontend/lib/api.js
- * HTTP client with JWT auth headers
+ * HTTP client with JWT auth headers + named API helpers
  */
 import { getToken } from './auth';
 
@@ -22,9 +22,28 @@ async function request(method, path, body) {
   return data;
 }
 
-export const apiClient = {
-  get: (path) => request('GET', path),
-  post: (path, body) => request('POST', path, body),
-  put: (path, body) => request('PUT', path, body),
-  delete: (path) => request('DELETE', path),
+export const get = (path) => request('GET', path);
+export const post = (path, body) => request('POST', path, body);
+export const put = (path, body) => request('PUT', path, body);
+export const del = (path) => request('DELETE', path);
+
+export const apiClient = { get, post, put, delete: del };
+
+export const migrations = {
+  list: () => get('/api/migrations'),
+  get: (id) => get(`/api/migrations/${id}`),
+  create: (repoUrl, platforms, plan, branch) =>
+    post('/api/migrations', { repoUrl, platforms, plan, branch }),
+  start: (id) => post(`/api/migrations/${id}/start`),
+  createPaymentIntent: (id) => post(`/api/migrations/${id}/payment-intent`),
+};
+
+export const credentials = {
+  list: () => get('/api/credentials'),
+  save: (platform, token) => post('/api/credentials', { platform, token }),
+  delete: (platform) => del(`/api/credentials/${platform}`),
+};
+
+export const token = {
+  get: getToken,
 };
