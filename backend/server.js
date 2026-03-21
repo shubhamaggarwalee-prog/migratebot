@@ -28,13 +28,33 @@ const passwordResetRoutes     = require('./routes/passwordReset');
 
 const app    = express();
 const server = http.createServer(app);
-const io     = new Server(server, {
-  cors: { origin: process.env.FRONTEND_URL || 'http://localhost:3000', methods: ['GET', 'POST'] },
+
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  'http://localhost:3000',
+  'http://localhost:3001',
+].filter(Boolean);
+
+function corsOrigin(origin, callback) {
+  // Allow requests with no origin (mobile apps, curl, Postman)
+  if (!origin) return callback(null, true);
+  // Allow any vercel.app subdomain (preview deployments)
+  if (origin.endsWith('.vercel.app')) return callback(null, true);
+  // Allow explicitly listed origins
+  if (allowedOrigins.includes(origin)) return callback(null, true);
+  callback(new Error(`CORS blocked: ${origin}`));
+}
+
+const corsOptions = { origin: corsOrigin, credentials: true };
+
+const io = new Server(server, {
+  cors: { origin: corsOrigin, methods: ['GET', 'POST'] },
 });
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use(helmet());
-app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials: true }));
+app.use(cors(corsOptions));
 app.use(morgan('combined', { stream: logger.stream }));
 
 // Raw body for Stripe webhooks — must come before express.json()
