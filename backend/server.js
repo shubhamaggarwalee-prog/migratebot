@@ -25,6 +25,7 @@ const twoFactorRoutes         = require('./routes/twoFactor');
 const emailVerificationRoutes = require('./routes/emailVerification');
 const notificationRoutes      = require('./routes/notifications');
 const passwordResetRoutes     = require('./routes/passwordReset');
+const chatRoutes              = require('./routes/chat');
 
 const app    = express();
 const server = http.createServer(app);
@@ -76,6 +77,7 @@ app.use('/api/2fa',               twoFactorRoutes);
 app.use('/api/email',             emailVerificationRoutes);
 app.use('/api/notifications',     notificationRoutes);
 app.use('/api/auth',              passwordResetRoutes);
+app.use('/api/chat',              chatRoutes);
 
 // ─── 404 ──────────────────────────────────────────────────────────────────────
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
