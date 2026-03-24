@@ -432,33 +432,28 @@ function StepConfigure({ onNext, onBack, setMigId }) {
     }
     setLoading(true); setError('');
     try {
-      // Save credentials via API
-      const credSaves = [
-        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/credentials`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('mb_token')}` },
-          body: JSON.stringify({ platform: 'anthropic', token: keys.anthropicKey }),
-        }),
-        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/credentials`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('mb_token')}` },
-          body: JSON.stringify({ platform: 'supabase', token: keys.supabaseKey }),
-        }),
-        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/credentials`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('mb_token')}` },
-          body: JSON.stringify({ platform: 'vercel', token: keys.vercelKey }),
-        }),
-        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/credentials`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('mb_token')}` },
-          body: JSON.stringify({ platform: 'railway', token: keys.railwayKey }),
-        }),
-      ];
-      await Promise.all(credSaves);
-
+      // Create migration first to get the migration ID
       const res = await migrations.create(repoUrl, selectedPlatforms, plan, branch);
-      setMigId(res.migration.id);
+      const migId = res.migration.id;
+
+      // Save credentials AFTER migration created, passing migration_id
+      const authHeader = `Bearer ${localStorage.getItem('mb_token')}`;
+      const apiBase = process.env.NEXT_PUBLIC_API_URL;
+      const credPayloads = [
+        { platform: 'anthropic', token: keys.anthropicKey },
+        { platform: 'supabase',  token: keys.supabaseKey },
+        { platform: 'vercel',    token: keys.vercelKey },
+        { platform: 'railway',   token: keys.railwayKey },
+      ];
+      await Promise.all(credPayloads.map(payload =>
+        fetch(`${apiBase}/api/credentials`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+          body: JSON.stringify({ ...payload, migration_id: migId }),
+        })
+      ));
+
+      setMigId(migId);
       onNext();
     } catch (e) {
       setError(e.message || 'Something went wrong. Please try again.');
@@ -668,7 +663,9 @@ const TASK_LABELS = {
 
 function StepRunning({ migrationId }) {
   useMigrationSocket(migrationId);
-  const { completedTasks, currentTask } = useWizardStore();
+  // Safe fallbacks in case store fields are not yet initialised
+  const completedTasks = useWizardStore(s => s.completedTasks) || [];
+  const currentTask    = useWizardStore(s => s.currentTask)    || null;
   const allTasks = Object.keys(TASK_LABELS);
   const progress = Math.round((completedTasks.length / allTasks.length) * 100);
 
@@ -697,7 +694,7 @@ function StepRunning({ migrationId }) {
       <div style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden', marginBottom: 20 }}>
         {allTasks.map((id, i) => {
           const done = completedTasks.includes(id);
-          const active = currentTask?.id === id;
+          const active = currentTask === id || currentTask?.id === id;
           const task = TASK_LABELS[id];
           return (
             <div key={id} style={{
