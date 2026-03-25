@@ -28,9 +28,10 @@ app.use('/api/webhooks',      require('./routes/webhooks'));
 app.use('/api/2fa',           require('./routes/twoFactor'));
 app.use('/api/password',      require('./routes/passwordReset'));
 app.use('/api/verify-email',  require('./routes/emailVerification'));
-app.use('/api/push-change',   require('./routes/pushChange'));       // Task 11 (simple)
+app.use('/api/push-change',   require('./routes/pushChange'));       // Task 11
 app.use('/api/upload-source', require('./routes/uploadSource'));     // Task 13
 app.use('/api/update-deploy', require('./routes/updateDeploy'));     // Task 14
+app.use('/api/app-health',    require('./routes/appHealth'));        // Task 15
 
 io.on('connection', socket => {
   socket.on('join',  room => socket.join(room));

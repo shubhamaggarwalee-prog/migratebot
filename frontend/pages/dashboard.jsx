@@ -1,6 +1,7 @@
 /**
  * frontend/pages/dashboard.jsx
  * Main dashboard — lists all migrations + Push a Change flow
+ * Task 15: Added HealthWidget inside YourAppSection for each live URL.
  */
 import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/router';
@@ -11,6 +12,7 @@ import StatusBadge from '../components/StatusBadge';
 import Layout from '../components/Layout';
 import Term from '../components/Term';
 import PushChange from '../components/PushChange';
+import HealthWidget from '../components/HealthWidget';
 
 const C = {
   amber: '#D97706', amberBg: '#FEF3C7', amberDark: '#B45309',
@@ -20,18 +22,18 @@ const C = {
   blue: '#2563EB', blueBg: '#DBEAFE',
 };
 
-// ─── Claude Chat Widget ─────────────────────────────────────────────────────
+// ─── Claude Chat Widget ────────────────────────────────────────────────────
 function ClaudeChat({ migration }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen]         = useState(false);
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
       text: `Hi! I'm Claude, the AI that helped deploy your app. I know all about your project — feel free to ask me anything! For example:\n\n• "How do I add a custom domain?"\n• "How do I update my app after making changes?"\n• "Why is my app slow?"`,
     },
   ]);
-  const [input, setInput] = useState('');
+  const [input, setInput]     = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError]     = useState('');
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -41,31 +43,21 @@ function ClaudeChat({ migration }) {
   const send = async () => {
     const text = input.trim();
     if (!text || loading) return;
-    setInput('');
-    setError('');
+    setInput(''); setError('');
     const next = [...messages, { role: 'user', text }];
     setMessages(next);
     setLoading(true);
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/chat`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('mb_token')}`,
-        },
-        body: JSON.stringify({
-          migration_id: migration.id,
-          messages: next.map(m => ({ role: m.role, content: m.text })),
-        }),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('mb_token')}` },
+        body: JSON.stringify({ migration_id: migration.id, messages: next.map(m => ({ role: m.role, content: m.text })) }),
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       setMessages(prev => [...prev, { role: 'assistant', text: data.reply }]);
-    } catch (e) {
-      setError('Could not reach Claude. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+    } catch { setError('Could not reach Claude. Please try again.'); }
+    finally  { setLoading(false); }
   };
 
   const handleKey = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
@@ -73,15 +65,7 @@ function ClaudeChat({ migration }) {
   return (
     <div style={{ marginBottom: '2rem' }}>
       {!open && (
-        <button
-          onClick={() => setOpen(true)}
-          style={{
-            width: '100%', padding: '14px 20px',
-            background: '#fff', border: `2px solid ${C.amber}`,
-            borderRadius: 12, cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: 12,
-          }}
-        >
+        <button onClick={() => setOpen(true)} style={{ width: '100%', padding: '14px 20px', background: '#fff', border: `2px solid ${C.amber}`, borderRadius: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: 24 }}>🤖</span>
           <div style={{ textAlign: 'left' }}>
             <div style={{ fontWeight: 700, fontSize: 15, color: C.ink }}>Ask <Term id="claude">Claude</Term> about your app</div>
@@ -105,42 +89,18 @@ function ClaudeChat({ migration }) {
           <div style={{ height: 320, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 12, background: C.surface }}>
             {messages.map((m, i) => (
               <div key={i} style={{ display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
-                <div style={{
-                  maxWidth: '80%', padding: '10px 14px',
-                  borderRadius: m.role === 'user' ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
-                  background: m.role === 'user' ? C.amber : '#fff',
-                  color: m.role === 'user' ? '#fff' : C.ink,
-                  fontSize: 14, lineHeight: 1.6,
-                  border: m.role === 'assistant' ? `1px solid ${C.border}` : 'none',
-                  whiteSpace: 'pre-wrap',
-                }}>
-                  {m.text}
-                </div>
+                <div style={{ maxWidth: '80%', padding: '10px 14px', borderRadius: m.role === 'user' ? '12px 12px 2px 12px' : '12px 12px 12px 2px', background: m.role === 'user' ? C.amber : '#fff', color: m.role === 'user' ? '#fff' : C.ink, fontSize: 14, lineHeight: 1.6, border: m.role === 'assistant' ? `1px solid ${C.border}` : 'none', whiteSpace: 'pre-wrap' }}>{m.text}</div>
               </div>
             ))}
             {loading && (
-              <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-                <div style={{ padding: '10px 14px', borderRadius: '12px 12px 12px 2px', background: '#fff', border: `1px solid ${C.border}`, fontSize: 14, color: C.inkLight }}>
-                  <Term id="claude">Claude</Term> is thinking…
-                </div>
-              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-start' }}><div style={{ padding: '10px 14px', borderRadius: '12px 12px 12px 2px', background: '#fff', border: `1px solid ${C.border}`, fontSize: 14, color: C.inkLight }}><Term id="claude">Claude</Term> is thinking…</div></div>
             )}
             {error && <div style={{ fontSize: 12, color: C.red, textAlign: 'center' }}>{error}</div>}
             <div ref={bottomRef} />
           </div>
           <div style={{ padding: '12px 16px', borderTop: `1px solid ${C.border}`, display: 'flex', gap: 8, background: '#fff' }}>
-            <textarea
-              value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKey}
-              placeholder="Ask anything about your app… (Enter to send)"
-              rows={1}
-              style={{ flex: 1, padding: '10px 12px', border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, resize: 'none', outline: 'none', fontFamily: 'inherit', lineHeight: 1.5 }}
-            />
-            <button
-              onClick={send} disabled={loading || !input.trim()}
-              style={{ padding: '10px 18px', background: loading || !input.trim() ? C.border : C.amber, color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: loading || !input.trim() ? 'default' : 'pointer' }}
-            >
-              Send
-            </button>
+            <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKey} placeholder="Ask anything about your app… (Enter to send)" rows={1} style={{ flex: 1, padding: '10px 12px', border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, resize: 'none', outline: 'none', fontFamily: 'inherit', lineHeight: 1.5 }} />
+            <button onClick={send} disabled={loading || !input.trim()} style={{ padding: '10px 18px', background: loading || !input.trim() ? C.border : C.amber, color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 14, cursor: loading || !input.trim() ? 'default' : 'pointer' }}>Send</button>
           </div>
         </div>
       )}
@@ -148,18 +108,18 @@ function ClaudeChat({ migration }) {
   );
 }
 
-// ─── Your App hero section ──────────────────────────────────────────────────
+// ─── YourAppSection ─────────────────────────────────────────────────────────────
 function YourAppSection({ migration }) {
   const [expanded, setExpanded] = useState(true);
-  const urls = migration.deployed_urls || {};
-  const plan = migration.plan || 'starter';
-  const savings = plan === 'pro' ? '$2,750' : '$900';
-  const devCost = plan === 'pro' ? '$3,000+' : '$1,000+';
+  const urls      = migration.deployed_urls || {};
+  const plan      = migration.plan || 'starter';
+  const savings   = plan === 'pro' ? '$2,750' : '$900';
+  const devCost   = plan === 'pro' ? '$3,000+' : '$1,000+';
   const platforms = migration.platforms || [];
 
   const urlItems = [
     urls.frontend && { icon: '🌐', label: 'Your app (what visitors see)', url: urls.frontend },
-    urls.backend  && { icon: '⚙️', label: 'Your backend server',          url: urls.backend },
+    urls.backend  && { icon: '⚙️', label: 'Your backend server',          url: urls.backend  },
     urls.database && { icon: '🗄️', label: 'Your database dashboard',      url: urls.database },
   ].filter(Boolean);
 
@@ -168,19 +128,19 @@ function YourAppSection({ migration }) {
     railway:  'your backend server is running on Railway',
     supabase: 'your database is set up on Supabase',
   };
-  const deployedDescriptions = platforms
-    .filter(p => platformDescriptions[p])
-    .map(p => platformDescriptions[p]);
+  const deployedDescriptions = platforms.filter(p => platformDescriptions[p]).map(p => platformDescriptions[p]);
 
   return (
     <div style={{ background: '#fff', borderRadius: 16, border: `2px solid ${C.green}`, marginBottom: '2rem', overflow: 'hidden', boxShadow: '0 4px 24px rgba(5,150,105,.1)' }}>
+      {/* Card header */}
       <div style={{ background: C.greenBg, padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: 28 }}>🎉</span>
           <div>
             <div style={{ fontWeight: 700, fontSize: 17, color: C.ink }}>Your App is Live!</div>
             <div style={{ fontSize: 13, color: C.inkMid, marginTop: 2 }}>
-              {migration.reponame || migration.repourl} — <Term id="deployment">deployed</Term> {new Date(migration.updated_at || migration.created_at).toLocaleDateString()}
+              {migration.reponame || migration.repourl} — <Term id="deployment">deployed</Term>{' '}
+              {new Date(migration.updated_at || migration.created_at).toLocaleDateString()}
             </div>
           </div>
         </div>
@@ -191,6 +151,11 @@ function YourAppSection({ migration }) {
 
       {expanded && (
         <div style={{ padding: '20px 24px' }}>
+
+          {/* ── Health widget — sits at the very top of the expanded panel ── */}
+          <HealthWidget migration={migration} />
+
+          {/* What we deployed */}
           <div style={{ background: C.blueBg, border: `1px solid ${C.blue}33`, borderRadius: 10, padding: '14px 16px', marginBottom: 20 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: C.blue, marginBottom: 6 }}>📋 What we <Term id="deployment">deployed</Term> for you</div>
             <p style={{ fontSize: 14, color: C.inkMid, lineHeight: 1.7, margin: 0 }}>
@@ -199,6 +164,8 @@ function YourAppSection({ migration }) {
               {' '}Anyone can now visit your app from any device, anywhere.
             </p>
           </div>
+
+          {/* Live links */}
           {urlItems.length > 0 && (
             <div style={{ marginBottom: 20 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginBottom: 10 }}>🔗 Your live links</div>
@@ -212,6 +179,8 @@ function YourAppSection({ migration }) {
               ))}
             </div>
           )}
+
+          {/* Savings box */}
           <div style={{ background: C.greenBg, border: `1px solid ${C.green}33`, borderRadius: 10, padding: '14px 16px' }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: C.green, marginBottom: 10 }}>💰 What you saved</div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -233,15 +202,16 @@ function YourAppSection({ migration }) {
   );
 }
 
-// ─── Main Dashboard ─────────────────────────────────────────────────────────
+// ─── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const router = useRouter();
-  const { user, loading } = useAuth();
+  const { user, loading }           = useAuth();
   const { migrations, isLoading, refresh } = useMigrations();
 
   useEffect(() => { if (!loading && !user) router.push('/login'); }, [user, loading, router]);
 
-  if (loading || isLoading) return <Layout><div style={{ textAlign: 'center', padding: '4rem', color: '#6B6860' }}>Loading...</div></Layout>;
+  if (loading || isLoading)
+    return <Layout><div style={{ textAlign: 'center', padding: '4rem', color: '#6B6860' }}>Loading...</div></Layout>;
 
   const latestSuccess = migrations.find(m => m.status === 'complete' && m.deployed_urls);
 
@@ -256,27 +226,22 @@ export default function Dashboard() {
         <Link href="/migrate" style={{ padding: '10px 20px', background: C.amber, color: '#fff', borderRadius: 8, textDecoration: 'none', fontWeight: 600, fontSize: 14 }}>+ New <Term id="migration">Migration</Term></Link>
       </div>
 
-      {/* Your App section */}
+      {/* Your App section (includes HealthWidget at the top) */}
       {latestSuccess && <YourAppSection migration={latestSuccess} />}
 
-      {/* ── Push a Change ── shown right after Your App, before Claude chat */}
-      {latestSuccess && (
-        <PushChange
-          migration={latestSuccess}
-          onSuccess={refresh}
-        />
-      )}
+      {/* Push a Change */}
+      {latestSuccess && <PushChange migration={latestSuccess} onSuccess={refresh} />}
 
-      {/* Claude chat widget */}
+      {/* Claude chat */}
       {latestSuccess && <ClaudeChat migration={latestSuccess} />}
 
       {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: '2rem' }}>
         {[
-          { label: 'Total',       value: migrations.length,                                                            color: C.amber },
-          { label: 'Complete',    value: migrations.filter(m => m.status === 'complete').length,                       color: C.green },
-          { label: 'In Progress', value: migrations.filter(m => ['deploying','analyzing'].includes(m.status)).length,  color: C.blue },
-          { label: 'Failed',      value: migrations.filter(m => m.status === 'failed').length,                         color: C.red },
+          { label: 'Total',       value: migrations.length,                                                           color: C.amber },
+          { label: 'Complete',    value: migrations.filter(m => m.status === 'complete').length,                      color: C.green },
+          { label: 'In Progress', value: migrations.filter(m => ['deploying','analyzing'].includes(m.status)).length, color: C.blue },
+          { label: 'Failed',      value: migrations.filter(m => m.status === 'failed').length,                        color: C.red },
         ].map(s => (
           <div key={s.label} style={{ background: '#fff', borderRadius: 10, border: `1px solid ${C.border}`, padding: '1.25rem' }}>
             <div style={{ fontSize: 28, fontWeight: 700, color: s.color }}>{s.value}</div>
