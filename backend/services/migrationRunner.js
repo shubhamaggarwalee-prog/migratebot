@@ -2,26 +2,29 @@
  * backend/services/migrationRunner.js
  * Real migration orchestration — Bull job processor.
  * Supports source platforms: github | replit | emergent | url (bare git)
+ *
+ * Task 17: Updated fire-and-forget email blocks to pass deployedUrls,
+ *          migrationId, and user name so the rich email templates have
+ *          all the data they need.
  */
 const { supabaseAdmin } = require('../utils/database');
 const { sendMigrationComplete, sendMigrationFailed } = require('./email');
 const { CodeAnalyzer } = require('../agent/analyzer');
-const GitHubService  = require('./github');
-const ReplitService  = require('./replit');
+const GitHubService   = require('./github');
+const ReplitService   = require('./replit');
 const SupabaseService = require('./supabase');
-const RailwayService = require('./railway');
-const VercelService  = require('./vercel');
-const StripeService  = require('./stripe');
-const { decrypt }    = require('../utils/encryption');
-const logger         = require('../utils/logger');
+const RailwayService  = require('./railway');
+const VercelService   = require('./vercel');
+const StripeService   = require('./stripe');
+const { decrypt }     = require('../utils/encryption');
+const logger          = require('../utils/logger');
 
 // Broadcast progress to all sockets subscribed to a migration room.
-// io is passed in from queue.js — no circular dependency.
 function broadcast(io, migrationId, payload) {
   if (io) io.to(`migration:${migrationId}`).emit('migration:progress', payload);
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async function log(io, ctx, level, message) {
   const safeLevel = ['info', 'warn', 'error', 'success'].includes(level) ? level : 'info';
@@ -122,7 +125,7 @@ async function runHealthChecks({ frontend, backend, database }) {
   return results;
 }
 
-// ─── Source adapters ──────────────────────────────────────────────────────────────────
+// ─── Source adapters ──────────────────────────────────────────────────────────────
 
 async function cloneFromGitHub(migration, creds, ctx) {
   const github   = new GitHubService(creds.github);
@@ -178,7 +181,7 @@ async function cloneSource(migration, creds, ctx) {
   }
 }
 
-// ─── Main orchestrator ──────────────────────────────────────────────────────────────────
+// ─── Main orchestrator ────────────────────────────────────────────────────────────────
 
 async function runMigration(migration, job, io) {
   const { id: migrationId } = migration;
@@ -193,7 +196,7 @@ async function runMigration(migration, job, io) {
 
     ctx.creds = await loadCredentials(migration.user_id, migration.platforms, migration.source_platform);
 
-    // ── Step 1: Clone + AI Analysis ───────────────────────────────────────────────
+    // ── Step 1: Clone + AI Analysis ──────────────────────────────────────────────────────
     await log(io, ctx, 'info', 'Step 1/5 — Cloning repository and running AI analysis');
     broadcast(io, migrationId, { type: 'task-start', taskId: 'analyze', title: 'AI codebase analysis' });
 
@@ -210,7 +213,7 @@ async function runMigration(migration, job, io) {
     broadcast(io, migrationId, { type: 'task-done', taskId: 'analyze', result: { framework: analysis.framework } });
     if (job) await job.progress(20);
 
-    // ── Step 2: Supabase ───────────────────────────────────────────────────────────────
+    // ── Step 2: Supabase ──────────────────────────────────────────────────────────
     if (migration.platforms.includes('supabase')) {
       broadcast(io, migrationId, { type: 'task-start', taskId: 'supabase', title: 'Creating Supabase project' });
       await log(io, ctx, 'info', 'Step 2/5 — Creating Supabase project');
@@ -240,7 +243,7 @@ async function runMigration(migration, job, io) {
 
     ctx.envVars = buildEnvVars(analysis, ctx);
 
-    // ── Step 3: Railway ──────────────────────────────────────────────────────────────────
+    // ── Step 3: Railway ───────────────────────────────────────────────────────────
     if (migration.platforms.includes('railway')) {
       broadcast(io, migrationId, { type: 'task-start', taskId: 'railway', title: 'Deploying backend to Railway' });
       await log(io, ctx, 'info', 'Step 3/5 — Deploying backend to Railway');
@@ -274,7 +277,7 @@ async function runMigration(migration, job, io) {
     }
     if (job) await job.progress(65);
 
-    // ── Step 4: Vercel ──────────────────────────────────────────────────────────────────
+    // ── Step 4: Vercel ────────────────────────────────────────────────────────────
     if (migration.platforms.includes('vercel')) {
       broadcast(io, migrationId, { type: 'task-start', taskId: 'vercel', title: 'Deploying frontend to Vercel' });
       await log(io, ctx, 'info', 'Step 4/5 — Deploying frontend to Vercel');
@@ -314,7 +317,7 @@ async function runMigration(migration, job, io) {
     }
     if (job) await job.progress(85);
 
-    // ── Step 5: Health checks ───────────────────────────────────────────────────────────
+    // ── Step 5: Health checks ──────────────────────────────────────────────────────
     broadcast(io, migrationId, { type: 'task-start', taskId: 'health', title: 'Running health checks' });
     await log(io, ctx, 'info', 'Step 5/5 — Running health checks');
     const healthResults = await runHealthChecks({
@@ -326,7 +329,7 @@ async function runMigration(migration, job, io) {
     await log(io, ctx, allHealthy ? 'success' : 'warn', `Health checks: ${JSON.stringify(healthResults)}`);
     broadcast(io, migrationId, { type: 'task-done', taskId: 'health', result: healthResults });
 
-    // ── Complete ────────────────────────────────────────────────────────────────────────
+    // ── Complete ────────────────────────────────────────────────────────────────────
     const deployedUrls = {
       frontend: ctx.vercelUrl                   || null,
       backend:  ctx.railwayUrl                  || null,
@@ -341,11 +344,19 @@ async function runMigration(migration, job, io) {
     broadcast(io, migrationId, { type: 'complete', status: 'complete', deployedUrls });
     if (job) await job.progress(100);
 
-    // Fire-and-forget success email
+    // ── Fire-and-forget success email (Task 17) ─────────────────────────────────────
     try {
-      const { data: user } = await supabaseAdmin.auth.admin.getUserById(migration.user_id);
-      if (user?.user?.email) {
-        await sendMigrationComplete(user.user.email, repoInfo.name, process.env.FRONTEND_URL || '');
+      const { data: authData } = await supabaseAdmin.auth.admin.getUserById(migration.user_id);
+      const userEmail = authData?.user?.email;
+      const userName  = authData?.user?.user_metadata?.name || authData?.user?.user_metadata?.full_name || '';
+      if (userEmail) {
+        await sendMigrationComplete(
+          userEmail,
+          repoInfo.name,
+          deployedUrls,
+          migrationId,
+          userName,
+        );
       }
     } catch (_) { /* email failure must never break migration */ }
 
@@ -371,11 +382,19 @@ async function runMigration(migration, job, io) {
       }
     }
 
-    // Fire-and-forget failure email
+    // ── Fire-and-forget failure email (Task 17) ─────────────────────────────────────
     try {
-      const { data: user } = await supabaseAdmin.auth.admin.getUserById(migration.user_id);
-      if (user?.user?.email && sendMigrationFailed) {
-        await sendMigrationFailed(user.user.email, ctx.repoInfo?.name || migration.repourl, err.message);
+      const { data: authData } = await supabaseAdmin.auth.admin.getUserById(migration.user_id);
+      const userEmail = authData?.user?.email;
+      const userName  = authData?.user?.user_metadata?.name || authData?.user?.user_metadata?.full_name || '';
+      if (userEmail) {
+        await sendMigrationFailed(
+          userEmail,
+          ctx.repoInfo?.name || migration.repourl,
+          err.message,
+          migrationId,
+          userName,
+        );
       }
     } catch (_) { /* ignore */ }
 
