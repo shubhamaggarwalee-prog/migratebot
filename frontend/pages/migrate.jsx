@@ -9,6 +9,7 @@ import Head from 'next/head';
 import { migrations } from '../lib/api';
 import { useWizardStore } from '../lib/store';
 import { useMigrationSocket } from '../hooks/useSocket';
+import Term from '../components/Term';
 
 const C = {
   amber: '#D97706', amberBg: '#FEF3C7', amberDark: '#B45309',
@@ -39,25 +40,6 @@ function StepBar({ step }) {
         </div>
       ))}
     </div>
-  );
-}
-
-// ─── Tooltip component ────────────────────────────────────────────────────────
-function Tooltip({ text, children }) {
-  const [show, setShow] = useState(false);
-  return (
-    <span style={{ position: 'relative', display: 'inline-block' }}
-      onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
-      {children}
-      {show && (
-        <div style={{
-          position: 'absolute', bottom: '120%', left: '50%', transform: 'translateX(-50%)',
-          background: C.ink, color: '#fff', padding: '8px 12px', borderRadius: 8,
-          fontSize: 12, lineHeight: 1.5, width: 220, zIndex: 100,
-          boxShadow: '0 4px 12px rgba(0,0,0,.2)', textAlign: 'left',
-        }}>{text}</div>
-      )}
-    </span>
   );
 }
 
@@ -168,7 +150,8 @@ function StepSource({ onNext }) {
       {source === 'replit' && (
         <div style={{ marginBottom: 16 }}>
           <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
-            Replit API Token <span style={{ fontWeight: 400, color: C.inkLight }}>(only needed for private apps)</span>
+            <Term id="api-token">Replit API Token</Term>{' '}
+            <span style={{ fontWeight: 400, color: C.inkLight }}>(only needed for private apps)</span>
           </label>
           <input
             type="password"
@@ -187,17 +170,15 @@ function StepSource({ onNext }) {
         </div>
       )}
 
-      {/* Branch (collapsed by default) */}
+      {/* Branch */}
       <details style={{ marginBottom: 20 }}>
         <summary style={{ fontSize: 13, color: C.inkMid, cursor: 'pointer', userSelect: 'none' }}>
-          Advanced: specify a branch (optional)
+          Advanced: specify a <Term id="branch">branch</Term> (optional)
         </summary>
         <div style={{ marginTop: 10 }}>
-          <Tooltip text="A branch is like a version of your code. If you don't know what this means, leave it as 'main'.">
-            <label style={{ fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
-              Branch <span style={{ fontSize: 11, color: C.blue, cursor: 'help' }}>What's this?</span>
-            </label>
-          </Tooltip>
+          <label style={{ fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Term id="branch">Branch</Term>
+          </label>
           <input
             value={branch}
             onChange={e => setBranch(e.target.value)}
@@ -231,7 +212,7 @@ const PLATFORM_GUIDES = [
     icon: '🤖',
     name: 'Anthropic API Key',
     tagline: 'The AI brain that reads your code',
-    what: 'Anthropic makes the Claude AI. We use it to read your code and understand how to deploy it correctly. Think of it as our translator between your app and the servers.',
+    what: 'Anthropic makes the Claude AI. We use it to read your code and understand how to deploy it correctly.',
     why: 'Without this, our AI cannot understand what your app does or how to set it up properly.',
     steps: [
       { n: 1, text: 'Click the button below to open Anthropic\'s website' },
@@ -244,13 +225,14 @@ const PLATFORM_GUIDES = [
     placeholder: 'sk-ant-...',
     field: 'anthropicKey',
     required: true,
+    termId: 'anthropic',
   },
   {
     id: 'supabase',
     icon: '🗄️',
     name: 'Supabase',
     tagline: 'Your app\'s database and login system',
-    what: 'Supabase is where your app stores all its data — user accounts, posts, orders, whatever your app saves. It\'s like a very powerful spreadsheet that your app can read and write to.',
+    what: 'Supabase is where your app stores all its data — user accounts, posts, orders, whatever your app saves.',
     why: 'Your app needs a database to remember things between sessions. Supabase gives you a free, professional-grade database.',
     steps: [
       { n: 1, text: 'Click the button below to open Supabase' },
@@ -264,13 +246,14 @@ const PLATFORM_GUIDES = [
     placeholder: 'sbp_...',
     field: 'supabaseKey',
     required: true,
+    termId: 'supabase',
   },
   {
     id: 'vercel',
     icon: '▲',
     name: 'Vercel',
     tagline: 'Where people visit your app',
-    what: 'Vercel is the service that makes your app accessible on the internet. When someone types your app\'s address into their browser, Vercel is what serves it to them — instantly, from anywhere in the world.',
+    what: 'Vercel is the service that makes your app accessible on the internet. When someone types your app\'s address into their browser, Vercel serves it to them.',
     why: 'Without Vercel, your app exists on your computer but nobody else can see it. Vercel puts it on the internet.',
     steps: [
       { n: 1, text: 'Click the button below to open Vercel' },
@@ -284,13 +267,14 @@ const PLATFORM_GUIDES = [
     placeholder: 'Paste your Vercel token here',
     field: 'vercelKey',
     required: true,
+    termId: 'vercel',
   },
   {
     id: 'railway',
     icon: '🚂',
     name: 'Railway',
     tagline: 'The server that runs your app\'s logic',
-    what: 'Railway runs the "backend" of your app — all the invisible logic that happens when your app does things like send emails, process payments, or save data. Think of it as the engine room.',
+    what: 'Railway runs the backend of your app — all the invisible logic that happens when your app sends emails, processes payments, or saves data.',
     why: 'If your app has any logic beyond showing static pages (like user accounts, data, or APIs), Railway is what runs it.',
     steps: [
       { n: 1, text: 'Click the button below to open Railway' },
@@ -304,6 +288,7 @@ const PLATFORM_GUIDES = [
     placeholder: 'Paste your Railway token here',
     field: 'railwayKey',
     required: true,
+    termId: 'railway',
   },
 ];
 
@@ -317,7 +302,6 @@ function PlatformGuide({ guide, value, onChange }) {
       borderRadius: 12, overflow: 'hidden', marginBottom: 12,
       transition: 'border-color .2s',
     }}>
-      {/* Header */}
       <button onClick={() => setOpen(!open)} style={{
         width: '100%', display: 'flex', alignItems: 'center', gap: 14,
         padding: '14px 16px', background: saved ? C.greenBg : open ? C.amberBg : '#fff',
@@ -325,7 +309,9 @@ function PlatformGuide({ guide, value, onChange }) {
       }}>
         <span style={{ fontSize: 28, flexShrink: 0 }}>{guide.icon}</span>
         <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 700, fontSize: 15, color: C.ink }}>{guide.name}</div>
+          <div style={{ fontWeight: 700, fontSize: 15, color: C.ink }}>
+            <Term id={guide.termId}>{guide.name}</Term>
+          </div>
           <div style={{ fontSize: 12, color: C.inkMid, marginTop: 2 }}>{guide.tagline}</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -340,23 +326,17 @@ function PlatformGuide({ guide, value, onChange }) {
         </div>
       </button>
 
-      {/* Expanded content */}
       {open && (
         <div style={{ padding: '16px 18px', borderTop: `1px solid ${C.border}`, background: '#fff' }}>
-          {/* What is it */}
           <InfoBox icon="💡" color={C.amber} bg={C.amberBg}>
-            <strong>What is {guide.name}?</strong> {guide.what}
+            <strong>What is <Term id={guide.termId}>{guide.name}</Term>?</strong> {guide.what}
           </InfoBox>
-
-          {/* Why needed */}
           <InfoBox icon="❓" color={C.blue} bg={C.blueBg}>
             <strong>Why do we need it?</strong> {guide.why}
           </InfoBox>
-
-          {/* Steps */}
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginBottom: 10 }}>
-              How to get your {guide.name} key (2 minutes):
+              How to get your <Term id={guide.termId}>{guide.name}</Term> <Term id="api-key">key</Term> (2 minutes):
             </div>
             {guide.steps.map(s => (
               <div key={s.n} style={{ display: 'flex', gap: 12, marginBottom: 8, alignItems: 'flex-start' }}>
@@ -369,24 +349,13 @@ function PlatformGuide({ guide, value, onChange }) {
               </div>
             ))}
           </div>
-
-          {/* Open platform button */}
-          <a
-            href={guide.link}
-            target="_blank"
-            rel="noreferrer"
-            style={{
-              display: 'block', width: '100%', padding: '11px', background: C.ink, color: '#fff',
-              borderRadius: 8, textAlign: 'center', fontWeight: 700, fontSize: 14,
-              textDecoration: 'none', marginBottom: 14, boxSizing: 'border-box',
-            }}
-          >
-            {guide.linkLabel}
-          </a>
-
-          {/* Token input */}
+          <a href={guide.link} target="_blank" rel="noreferrer" style={{
+            display: 'block', width: '100%', padding: '11px', background: C.ink, color: '#fff',
+            borderRadius: 8, textAlign: 'center', fontWeight: 700, fontSize: 14,
+            textDecoration: 'none', marginBottom: 14, boxSizing: 'border-box',
+          }}>{guide.linkLabel}</a>
           <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
-            Paste your {guide.name} key here:
+            Paste your <Term id={guide.termId}>{guide.name}</Term> <Term id="api-key">key</Term> here:
           </label>
           <input
             type="password"
@@ -400,9 +369,7 @@ function PlatformGuide({ guide, value, onChange }) {
             }}
           />
           {saved && (
-            <p style={{ fontSize: 12, color: C.green, marginTop: 6, fontWeight: 600 }}>
-              ✓ Key saved — you can close this section
-            </p>
+            <p style={{ fontSize: 12, color: C.green, marginTop: 6, fontWeight: 600 }}>✓ Key saved — you can close this section</p>
           )}
         </div>
       )}
@@ -418,25 +385,15 @@ function StepConfigure({ onNext, onBack, setMigId }) {
 
   const setKey = (field, value) => setKeys(prev => ({ ...prev, [field]: value }));
   const selectedPlatforms = Object.entries(platforms).filter(([, v]) => v).map(([k]) => k);
-
   const allRequired = keys.anthropicKey && keys.supabaseKey && keys.vercelKey && keys.railwayKey;
 
   const handleStart = async () => {
-    if (!allRequired) {
-      setError('Please connect all four services above before continuing. Each one takes about 2 minutes.');
-      return;
-    }
-    if (selectedPlatforms.length === 0) {
-      setError('Please select at least one deployment platform.');
-      return;
-    }
+    if (!allRequired) { setError('Please connect all four services above before continuing. Each one takes about 2 minutes.'); return; }
+    if (selectedPlatforms.length === 0) { setError('Please select at least one deployment platform.'); return; }
     setLoading(true); setError('');
     try {
-      // Create migration first to get the migration ID
       const res = await migrations.create(repoUrl, selectedPlatforms, plan, branch);
       const migId = res.migration.id;
-
-      // Save credentials AFTER migration created, passing migration_id
       const authHeader = `Bearer ${localStorage.getItem('mb_token')}`;
       const apiBase = process.env.NEXT_PUBLIC_API_URL;
       const credPayloads = [
@@ -452,7 +409,6 @@ function StepConfigure({ onNext, onBack, setMigId }) {
           body: JSON.stringify({ ...payload, migration_id: migId }),
         })
       ));
-
       setMigId(migId);
       onNext();
     } catch (e) {
@@ -468,36 +424,26 @@ function StepConfigure({ onNext, onBack, setMigId }) {
         Set up your free accounts
       </h2>
       <p style={{ color: C.inkMid, fontSize: 14, marginBottom: 8, lineHeight: 1.6 }}>
-        We need to connect four free services to deploy your app. Each takes about 2 minutes to set up.
+        We need to connect four free services to <Term id="deployment">deploy</Term> your app.
+        Each takes about 2 minutes to set up.
         <strong style={{ color: C.ink }}> You only do this once.</strong>
       </p>
 
       <InfoBox icon="🔒" color={C.green} bg={C.greenBg}>
-        <strong>Your keys are safe.</strong> All tokens are encrypted with military-grade security (AES-256). We use them only during your migration and never share them with anyone.
+        <strong>Your keys are safe.</strong> All <Term id="api-token">tokens</Term> are <Term id="encryption">encrypted</Term> with <Term id="aes-256">AES-256</Term> military-grade security. We use them only during your <Term id="migration">migration</Term> and never share them.
       </InfoBox>
 
-      {/* Platform guides */}
       {PLATFORM_GUIDES.map(guide => (
-        <PlatformGuide
-          key={guide.id}
-          guide={guide}
-          value={keys[guide.field]}
-          onChange={val => setKey(guide.field, val)}
-        />
+        <PlatformGuide key={guide.id} guide={guide} value={keys[guide.field]} onChange={val => setKey(guide.field, val)} />
       ))}
 
-      {/* Deployment targets */}
       <div style={{ marginTop: 20, marginBottom: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginBottom: 6 }}>
-          Where should we deploy? (select all that apply)
-        </div>
-        <p style={{ fontSize: 12, color: C.inkMid, marginBottom: 12 }}>
-          Not sure? Select all three — we'll figure out what your app needs.
-        </p>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginBottom: 6 }}>Where should we deploy? (select all that apply)</div>
+        <p style={{ fontSize: 12, color: C.inkMid, marginBottom: 12 }}>Not sure? Select all three — we'll figure out what your app needs.</p>
         {[
-          { id: 'supabase', icon: '🗄️', label: 'Database (Supabase)', desc: 'For storing your app\'s data' },
-          { id: 'vercel', icon: '▲', label: 'Frontend (Vercel)', desc: 'What visitors see in their browser' },
-          { id: 'railway', icon: '🚂', label: 'Backend (Railway)', desc: 'The invisible logic that runs your app' },
+          { id: 'supabase', icon: '🗄️', label: 'Database', termId: 'supabase', desc: 'For storing your app\'s data (powered by Supabase)' },
+          { id: 'vercel',   icon: '▲',   label: 'Frontend', termId: 'vercel',   desc: 'What visitors see in their browser (powered by Vercel)' },
+          { id: 'railway',  icon: '🚂',  label: 'Backend',  termId: 'railway',  desc: 'The invisible logic that runs your app (powered by Railway)' },
         ].map(p => (
           <label key={p.id} style={{
             display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px',
@@ -509,14 +455,15 @@ function StepConfigure({ onNext, onBack, setMigId }) {
               style={{ width: 18, height: 18, accentColor: C.amber, flexShrink: 0 }} />
             <span style={{ fontSize: 20 }}>{p.icon}</span>
             <div>
-              <div style={{ fontWeight: 600, fontSize: 14, color: C.ink }}>{p.label}</div>
+              <div style={{ fontWeight: 600, fontSize: 14, color: C.ink }}>
+                <Term id={p.termId}>{p.label}</Term>
+              </div>
               <div style={{ fontSize: 11, color: C.inkMid }}>{p.desc}</div>
             </div>
           </label>
         ))}
       </div>
 
-      {/* Plan selection */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginBottom: 10 }}>Choose your plan</div>
         {[
@@ -560,7 +507,6 @@ function StepPayment({ onNext, onBack, migrationId }) {
   const { plan, setPayment } = useWizardStore();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-
   const price = plan === 'pro' ? '$250' : '$100';
   const savings = plan === 'pro' ? '$2,750+' : '$900+';
 
@@ -580,14 +526,9 @@ function StepPayment({ onNext, onBack, migrationId }) {
 
   return (
     <div>
-      <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 26, color: C.ink, marginBottom: 6 }}>
-        Ready to go live?
-      </h2>
-      <p style={{ color: C.inkMid, fontSize: 14, marginBottom: 24, lineHeight: 1.6 }}>
-        You're one step away from having a professional, live app.
-      </p>
+      <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 26, color: C.ink, marginBottom: 6 }}>Ready to go live?</h2>
+      <p style={{ color: C.inkMid, fontSize: 14, marginBottom: 24, lineHeight: 1.6 }}>You're one step away from having a professional, live app.</p>
 
-      {/* Value comparison */}
       <div style={{ background: C.greenBg, border: `1px solid ${C.green}44`, borderRadius: 12, padding: '16px 18px', marginBottom: 20 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: C.green, marginBottom: 10 }}>💰 What you're getting</div>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -604,15 +545,14 @@ function StepPayment({ onNext, onBack, migrationId }) {
         </div>
       </div>
 
-      {/* Order summary */}
       <div style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 12, padding: '16px 18px', marginBottom: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginBottom: 12 }}>Order summary</div>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
           <span style={{ color: C.inkMid, fontSize: 14 }}>Plan</span>
-          <span style={{ fontWeight: 600, textTransform: 'capitalize' }}>{plan} Migration</span>
+          <span style={{ fontWeight: 600, textTransform: 'capitalize' }}>{plan} <Term id="migration">Migration</Term></span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-          <span style={{ color: C.inkMid, fontSize: 14 }}>Migration ID</span>
+          <span style={{ color: C.inkMid, fontSize: 14 }}><Term id="migration">Migration</Term> ID</span>
           <code style={{ fontSize: 11, color: C.inkMid }}>{migrationId?.slice(0, 16)}…</code>
         </div>
         <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 12, display: 'flex', justifyContent: 'space-between' }}>
@@ -621,20 +561,14 @@ function StepPayment({ onNext, onBack, migrationId }) {
         </div>
       </div>
 
-      {/* Guarantee */}
       <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10, padding: '12px 16px', marginBottom: 20 }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: '#166534', marginBottom: 4 }}>🛡 100% Money-Back Guarantee</div>
         <div style={{ fontSize: 13, color: '#166534', lineHeight: 1.6 }}>
-          If your migration fails for <em>any</em> reason, your payment is automatically refunded in full within 24 hours.
-          No questions asked. No forms to fill out.
+          If your <Term id="migration">migration</Term> fails for <em>any</em> reason, your payment is automatically refunded in full within 24 hours. No questions asked.
         </div>
       </div>
 
-      {error && (
-        <div style={{ background: C.redBg, border: `1px solid ${C.red}44`, borderRadius: 8, padding: '12px 14px', color: C.red, fontSize: 13, marginBottom: 16 }}>
-          {error}
-        </div>
-      )}
+      {error && <div style={{ background: C.redBg, border: `1px solid ${C.red}44`, borderRadius: 8, padding: '12px 14px', color: C.red, fontSize: 13, marginBottom: 16 }}>{error}</div>}
 
       <div style={{ display: 'flex', gap: 10 }}>
         <button onClick={onBack} style={{ flex: 1, padding: 12, background: '#fff', color: C.ink, border: `2px solid ${C.border}`, borderRadius: 8, fontWeight: 600, cursor: 'pointer' }}>← Back</button>
@@ -644,9 +578,8 @@ function StepPayment({ onNext, onBack, migrationId }) {
           cursor: loading ? 'default' : 'pointer', boxShadow: loading ? 'none' : '0 4px 12px rgba(217,119,6,.3)',
         }}>{loading ? 'Processing payment…' : `Pay ${price} & Deploy My App`}</button>
       </div>
-
       <p style={{ fontSize: 11, color: C.inkLight, textAlign: 'center', marginTop: 12 }}>
-        🔒 Secured by Stripe · Your card details never touch our servers
+        🔒 Secured by <Term id="stripe">Stripe</Term> · Your card details never touch our servers
       </p>
     </div>
   );
@@ -663,7 +596,6 @@ const TASK_LABELS = {
 
 function StepRunning({ migrationId }) {
   useMigrationSocket(migrationId);
-  // Safe fallbacks in case store fields are not yet initialised
   const completedTasks = useWizardStore(s => s.completedTasks) || [];
   const currentTask    = useWizardStore(s => s.currentTask)    || null;
   const allTasks = Object.keys(TASK_LABELS);
@@ -672,14 +604,13 @@ function StepRunning({ migrationId }) {
   return (
     <div>
       <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 26, color: C.ink, marginBottom: 6 }}>
-        Deploying your app… ⚡
+        <Term id="deployment">Deploying</Term> your app… ⚡
       </h2>
       <p style={{ color: C.inkMid, fontSize: 14, marginBottom: 20, lineHeight: 1.6 }}>
         Please keep this tab open. This usually takes 2–5 minutes.
-        You'll see each step as it completes.
+        A live <Term id="websocket">connection</Term> keeps this page updated automatically.
       </p>
 
-      {/* Progress bar */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
           <span style={{ fontSize: 13, color: C.inkMid }}>Overall progress</span>
@@ -690,7 +621,6 @@ function StepRunning({ migrationId }) {
         </div>
       </div>
 
-      {/* Task list */}
       <div style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden', marginBottom: 20 }}>
         {allTasks.map((id, i) => {
           const done = completedTasks.includes(id);
@@ -708,9 +638,7 @@ function StepRunning({ migrationId }) {
                 display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13,
                 background: done ? C.green : active ? C.amber : C.border,
                 color: done || active ? '#fff' : C.inkLight,
-              }}>
-                {done ? '✓' : active ? '…' : i + 1}
-              </div>
+              }}>{done ? '✓' : active ? '…' : i + 1}</div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 14, fontWeight: active ? 700 : done ? 600 : 400, color: C.ink }}>{task.label}</div>
                 {(active || done) && <div style={{ fontSize: 12, color: done ? C.green : C.inkMid, marginTop: 2 }}>{task.desc}</div>}
@@ -723,10 +651,8 @@ function StepRunning({ migrationId }) {
       </div>
 
       <InfoBox icon="☕" color={C.amber} bg={C.amberBg}>
-        <strong>Good time for a coffee break!</strong> We're doing the equivalent of 2–5 days of developer work in the background. We'll show you your live links when it's done.
+        <strong>Good time for a coffee break!</strong> We're doing the equivalent of 2–5 days of developer work in the background.
       </InfoBox>
-
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
@@ -740,47 +666,41 @@ function StepDone({ migrationId }) {
   return (
     <div style={{ textAlign: 'center' }}>
       <div style={{ fontSize: 72, marginBottom: 16 }}>🎉</div>
-      <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 28, color: C.ink, marginBottom: 8 }}>
-        Your app is live!
-      </h2>
+      <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 28, color: C.ink, marginBottom: 8 }}>Your app is live!</h2>
       <p style={{ color: C.inkMid, fontSize: 15, marginBottom: 8, lineHeight: 1.6 }}>
-        Congratulations! Your app is now professionally deployed and accessible to anyone in the world.
+        Congratulations! Your app is now professionally <Term id="deployment">deployed</Term> and accessible to anyone in the world.
       </p>
-      <p style={{ color: C.green, fontSize: 14, fontWeight: 700, marginBottom: 28 }}>
-        You just saved approximately {savings} in developer fees 🚀
-      </p>
+      <p style={{ color: C.green, fontSize: 14, fontWeight: 700, marginBottom: 28 }}>You just saved approximately {savings} in developer fees 🚀</p>
 
-      {/* Live URLs */}
       {deployedUrls && (
         <div style={{ background: C.greenBg, border: `1px solid ${C.green}44`, borderRadius: 12, padding: '20px', marginBottom: 24, textAlign: 'left' }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: C.green, marginBottom: 14 }}>✓ Your live app links</div>
           {[
-            { label: '🌐 Your app (what visitors see)', url: deployedUrls.frontend, key: 'frontend' },
-            { label: '⚙️ Your backend server', url: deployedUrls.backend, key: 'backend' },
-            { label: '🗄️ Your database dashboard', url: deployedUrls.database, key: 'database' },
+            { label: '🌐 Your app — served by', platform: 'Vercel', termId: 'vercel', url: deployedUrls.frontend, key: 'frontend' },
+            { label: '⚙️ Your backend — running on', platform: 'Railway', termId: 'railway', url: deployedUrls.backend, key: 'backend' },
+            { label: '🗄️ Your database — hosted on', platform: 'Supabase', termId: 'supabase', url: deployedUrls.database, key: 'database' },
           ].filter(item => deployedUrls[item.key]).map(item => (
             <div key={item.key} style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 12, color: C.inkMid, marginBottom: 4 }}>{item.label}</div>
+              <div style={{ fontSize: 12, color: C.inkMid, marginBottom: 4 }}>
+                {item.label} <Term id={item.termId}>{item.platform}</Term>
+              </div>
               <a href={item.url} target="_blank" rel="noreferrer" style={{
                 display: 'block', color: C.amber, fontWeight: 700, fontSize: 14,
                 wordBreak: 'break-all', textDecoration: 'none', padding: '8px 12px',
                 background: '#fff', borderRadius: 8, border: `1px solid ${C.border}`,
-              }}>
-                {item.url} ↗
-              </a>
+              }}>{item.url} ↗</a>
             </div>
           ))}
         </div>
       )}
 
-      {/* What's next */}
       <div style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 12, padding: '20px', marginBottom: 24, textAlign: 'left' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: C.ink, marginBottom: 14 }}>📋 What happens next?</div>
         {[
-          { icon: '🔗', title: 'Add your own domain name', desc: 'Want yourappname.com instead of a random URL? Go to your Vercel dashboard and click "Add Domain". It takes 5 minutes.' },
-          { icon: '🔄', title: 'Update your app', desc: 'Made changes to your code? Just push to GitHub/Replit and run a new migration, or re-deploy directly from your Vercel dashboard.' },
-          { icon: '📊', title: 'Monitor your app', desc: 'Watch your app\'s traffic and errors in your Railway and Vercel dashboards. Both have free tiers that are plenty for starting out.' },
-          { icon: '🆘', title: 'Something not working?', desc: 'Email us at support@migratebot.io and we\'ll help you sort it out. If it\'s our fault, we\'ll fix it for free.' },
+          { icon: '🔗', title: 'Add your own domain name', desc: <span>Want yourappname.com? Go to your <Term id="vercel">Vercel</Term> dashboard and click "Add <Term id="domain">Domain</Term>". It takes 5 minutes.</span> },
+          { icon: '🔄', title: 'Update your app', desc: <span>Made changes to your code? Push to <Term id="github">GitHub</Term>/<Term id="replit">Replit</Term> and run a new <Term id="migration">migration</Term>, or re-deploy from your <Term id="vercel">Vercel</Term> dashboard.</span> },
+          { icon: '📊', title: 'Monitor your app', desc: <span>Watch traffic and errors in your <Term id="railway">Railway</Term> and <Term id="vercel">Vercel</Term> dashboards. Both have free tiers that are plenty for starting out.</span> },
+          { icon: '🆘', title: 'Something not working?', desc: 'Email us at support@migratebot.io — if it\'s our fault, we\'ll fix it for free.' },
         ].map(item => (
           <div key={item.title} style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
             <span style={{ fontSize: 22, flexShrink: 0 }}>{item.icon}</span>
@@ -796,21 +716,14 @@ function StepDone({ migrationId }) {
         <button onClick={() => router.push(`/migrations/${migrationId}`)} style={{
           padding: '12px 22px', background: '#fff', color: C.ink,
           border: `2px solid ${C.border}`, borderRadius: 8, fontWeight: 600, cursor: 'pointer', fontSize: 14,
-        }}>
-          View full report
-        </button>
+        }}>View full report</button>
         <button onClick={() => { reset(); router.push('/dashboard'); }} style={{
           padding: '12px 22px', background: C.amber, color: '#fff',
           border: 'none', borderRadius: 8, fontWeight: 700, cursor: 'pointer', fontSize: 14,
           boxShadow: '0 4px 12px rgba(217,119,6,.3)',
-        }}>
-          Go to dashboard →
-        </button>
+        }}>Go to dashboard →</button>
       </div>
-
-      <p style={{ fontSize: 12, color: C.inkLight, marginTop: 16 }}>
-        Enjoyed MigrateBot? Tell a friend — every referral helps us keep the lights on 🙏
-      </p>
+      <p style={{ fontSize: 12, color: C.inkLight, marginTop: 16 }}>Enjoyed MigrateBot? Tell a friend 🙏</p>
     </div>
   );
 }
@@ -819,7 +732,6 @@ function StepDone({ migrationId }) {
 export default function MigratePage() {
   const { step, setStep } = useWizardStore();
   const [migrationId, setMigId] = useState(null);
-
   const next = () => setStep(step + 1);
   const back = () => setStep(step - 1);
 
@@ -831,29 +743,22 @@ export default function MigratePage() {
       </Head>
       <div style={{ minHeight: '100vh', background: C.surface, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '40px 16px' }}>
         <div style={{ width: '100%', maxWidth: 580 }}>
-          {/* Logo */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 32 }}>
             <span style={{ fontSize: 28 }}>⚡</span>
             <div style={{ fontFamily: 'Georgia, serif', fontSize: 22, fontWeight: 700, color: C.ink }}>
               Migrate<span style={{ color: C.amber }}>Bot</span>
             </div>
           </div>
-
           <StepBar step={step} />
-
-          <div style={{
-            background: '#fff', borderRadius: 16, border: `1px solid ${C.border}`,
-            padding: '28px 28px', boxShadow: '0 2px 20px rgba(0,0,0,.06)',
-          }}>
+          <div style={{ background: '#fff', borderRadius: 16, border: `1px solid ${C.border}`, padding: '28px 28px', boxShadow: '0 2px 20px rgba(0,0,0,.06)' }}>
             {step === 0 && <StepSource onNext={next} />}
             {step === 1 && <StepConfigure onNext={next} onBack={back} setMigId={setMigId} />}
             {step === 2 && <StepPayment onNext={next} onBack={back} migrationId={migrationId} />}
             {step === 3 && <StepRunning migrationId={migrationId} />}
             {step === 4 && <StepDone migrationId={migrationId} />}
           </div>
-
           <p style={{ fontSize: 11, color: C.inkLight, textAlign: 'center', marginTop: 16 }}>
-            🔒 Your code is never stored · AES-256 encryption · 100% refund if migration fails
+            🔒 Your code is never stored · <Term id="aes-256">AES-256</Term> <Term id="encryption">encryption</Term> · 100% refund if <Term id="migration">migration</Term> fails
           </p>
         </div>
       </div>
