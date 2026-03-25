@@ -1,7 +1,8 @@
 /**
  * frontend/pages/migrations/[id].jsx
  * Individual migration detail + real-time log + What Happens Next guide
- * Task 16: Added CostEstimateCard between live links and WhatHappensNext.
+ * Task 16: Added CostEstimateCard
+ * Task 18: Added "Share Receipt" button in the success banner
  */
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
@@ -14,7 +15,7 @@ import { apiClient } from '../../lib/api';
 import useSocket from '../../hooks/useSocket';
 
 const C = {
-  amber: '#D97706', amberBg: '#FEF3C7',
+  amber: '#D97706', amberBg: '#FEF3C7', amberDark: '#B45309',
   ink: '#1A1814', inkMid: '#5C574E', inkLight: '#9B958A',
   border: '#E5E2DA', surface: '#F8F7F4',
   green: '#059669', greenBg: '#D1FAE5',
@@ -27,6 +28,7 @@ export default function MigrationDetail() {
   const { user, loading } = useAuth();
   const [migration, setMigration] = useState(null);
   const [logs, setLogs]           = useState([]);
+  const [copied, setCopied]       = useState(false);
   const socket = useSocket();
 
   useEffect(() => { if (!loading && !user) router.push('/login'); }, [user, loading, router]);
@@ -39,8 +41,8 @@ export default function MigrationDetail() {
   useEffect(() => {
     if (!socket || !id) return;
     socket.emit('join', `migration:${id}`);
-    socket.on('migration:log',      entry  => setLogs(l => [...l, entry]));
-    socket.on('migration:complete', ()     => setMigration(m => m ? { ...m, status: 'complete' } : m));
+    socket.on('migration:log',      entry      => setLogs(l => [...l, entry]));
+    socket.on('migration:complete', ()         => setMigration(m => m ? { ...m, status: 'complete' } : m));
     socket.on('migration:error',    ({ error }) => setMigration(m => m ? { ...m, status: 'failed', error_message: error } : m));
     return () => {
       socket.off('migration:log');
@@ -48,6 +50,14 @@ export default function MigrationDetail() {
       socket.off('migration:error');
     };
   }, [socket, id]);
+
+  const handleCopyReceipt = () => {
+    const url = `${window.location.origin}/receipt/${id}`;
+    navigator.clipboard?.writeText(url).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    });
+  };
 
   if (!migration) return (
     <Layout>
@@ -57,6 +67,7 @@ export default function MigrationDetail() {
 
   const isComplete = migration.status === 'complete';
   const isFailed   = migration.status === 'failed';
+  const receiptUrl = `/receipt/${id}`;
 
   return (
     <Layout>
@@ -77,17 +88,55 @@ export default function MigrationDetail() {
             {migration.source_platform} · {migration.branch} · {migration.tier}
           </p>
         </div>
-        <StatusBadge status={migration.status} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {isComplete && (
+            <>
+              {/* Share Receipt button */}
+              <button
+                onClick={handleCopyReceipt}
+                style={{
+                  padding: '8px 16px', borderRadius: 8,
+                  background: copied ? C.green : C.surface,
+                  color: copied ? '#fff' : C.ink,
+                  border: `1px solid ${C.border}`,
+                  fontWeight: 600, fontSize: 13, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  transition: 'all .2s',
+                }}
+              >
+                <span>{copied ? '✓' : '🔗'}</span>
+                {copied ? 'Link copied!' : 'Share receipt'}
+              </button>
+              <a
+                href={receiptUrl}
+                target="_blank" rel="noreferrer"
+                style={{ padding: '8px 16px', borderRadius: 8, background: C.amberBg, color: C.amberDark, border: `1px solid ${C.amber}44`, fontWeight: 600, fontSize: 13, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                📄 View receipt ↗
+              </a>
+            </>
+          )}
+          <StatusBadge status={migration.status} />
+        </div>
       </div>
 
       {/* ── Success banner ── */}
       {isComplete && (
-        <div style={{ background: C.greenBg, border: `1px solid ${C.green}44`, borderRadius: 12, padding: '16px 20px', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: 14 }}>
-          <span style={{ fontSize: 28 }}>🎉</span>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 16, color: C.green }}>Your app is live!</div>
-            <div style={{ fontSize: 13, color: '#166534', marginTop: 2 }}>Migration completed successfully. Your app is now accessible to anyone in the world.</div>
+        <div style={{ background: C.greenBg, border: `1px solid ${C.green}44`, borderRadius: 12, padding: '16px 20px', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <span style={{ fontSize: 28 }}>🎉</span>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 16, color: C.green }}>Your app is live!</div>
+              <div style={{ fontSize: 13, color: '#166534', marginTop: 2 }}>Migration completed successfully. Your app is now accessible to anyone in the world.</div>
+            </div>
           </div>
+          <a
+            href={receiptUrl}
+            target="_blank" rel="noreferrer"
+            style={{ flexShrink: 0, padding: '9px 16px', borderRadius: 8, background: C.green, color: '#fff', fontWeight: 700, fontSize: 13, textDecoration: 'none', whiteSpace: 'nowrap' }}
+          >
+            📄 Share receipt
+          </a>
         </div>
       )}
 
@@ -115,9 +164,7 @@ export default function MigrationDetail() {
           ].filter(item => migration.deployed_urls[item.key]).map(item => (
             <div key={item.key} style={{ marginBottom: 10 }}>
               <div style={{ fontSize: 12, color: C.inkMid, marginBottom: 3 }}>{item.icon} {item.label}</div>
-              <a
-                href={migration.deployed_urls[item.key]}
-                target="_blank" rel="noreferrer"
+              <a href={migration.deployed_urls[item.key]} target="_blank" rel="noreferrer"
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, color: C.amber, fontWeight: 700, fontSize: 14, textDecoration: 'none', wordBreak: 'break-all' }}
               >
                 <span>{migration.deployed_urls[item.key]}</span>
@@ -157,7 +204,7 @@ export default function MigrationDetail() {
         </div>
       )}
 
-      {/* ── Cost estimate card (Task 16) — shown only for completed migrations ── */}
+      {/* ── Cost estimate card (Task 16) ── */}
       {isComplete && <CostEstimateCard migration={migration} />}
 
       {/* ── What Happens Next ── */}

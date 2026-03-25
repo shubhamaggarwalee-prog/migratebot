@@ -32,6 +32,7 @@ app.use('/api/push-change',   require('./routes/pushChange'));       // Task 11
 app.use('/api/upload-source', require('./routes/uploadSource'));     // Task 13
 app.use('/api/update-deploy', require('./routes/updateDeploy'));     // Task 14
 app.use('/api/app-health',    require('./routes/appHealth'));        // Task 15
+app.use('/api/receipt',       require('./routes/receipt'));          // Task 18 — public, no auth
 
 io.on('connection', socket => {
   socket.on('join',  room => socket.join(room));
