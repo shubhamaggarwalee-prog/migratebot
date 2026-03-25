@@ -1,12 +1,14 @@
 /**
  * frontend/pages/migrations/[id].jsx
  * Individual migration detail + real-time log + What Happens Next guide
+ * Task 16: Added CostEstimateCard between live links and WhatHappensNext.
  */
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import Layout from '../../components/Layout';
 import StatusBadge from '../../components/StatusBadge';
 import WhatHappensNext from '../../components/WhatHappensNext';
+import CostEstimateCard from '../../components/CostEstimateCard';
 import { useAuth } from '../../context/AuthContext';
 import { apiClient } from '../../lib/api';
 import useSocket from '../../hooks/useSocket';
@@ -24,7 +26,7 @@ export default function MigrationDetail() {
   const { id } = router.query;
   const { user, loading } = useAuth();
   const [migration, setMigration] = useState(null);
-  const [logs, setLogs] = useState([]);
+  const [logs, setLogs]           = useState([]);
   const socket = useSocket();
 
   useEffect(() => { if (!loading && !user) router.push('/login'); }, [user, loading, router]);
@@ -37,9 +39,9 @@ export default function MigrationDetail() {
   useEffect(() => {
     if (!socket || !id) return;
     socket.emit('join', `migration:${id}`);
-    socket.on('migration:log', (entry) => setLogs(l => [...l, entry]));
-    socket.on('migration:complete', () => setMigration(m => m ? { ...m, status: 'complete' } : m));
-    socket.on('migration:error', ({ error }) => setMigration(m => m ? { ...m, status: 'failed', error_message: error } : m));
+    socket.on('migration:log',      entry  => setLogs(l => [...l, entry]));
+    socket.on('migration:complete', ()     => setMigration(m => m ? { ...m, status: 'complete' } : m));
+    socket.on('migration:error',    ({ error }) => setMigration(m => m ? { ...m, status: 'failed', error_message: error } : m));
     return () => {
       socket.off('migration:log');
       socket.off('migration:complete');
@@ -65,7 +67,7 @@ export default function MigrationDetail() {
         ← Dashboard
       </button>
 
-      {/* Header */}
+      {/* ── Header ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2rem' }}>
         <div>
           <h1 style={{ fontFamily: 'Georgia, serif', fontSize: 24, color: C.ink, margin: 0 }}>
@@ -78,30 +80,20 @@ export default function MigrationDetail() {
         <StatusBadge status={migration.status} />
       </div>
 
-      {/* Success banner */}
+      {/* ── Success banner ── */}
       {isComplete && (
-        <div style={{
-          background: C.greenBg, border: `1px solid ${C.green}44`,
-          borderRadius: 12, padding: '16px 20px', marginBottom: '1.5rem',
-          display: 'flex', alignItems: 'center', gap: 14,
-        }}>
+        <div style={{ background: C.greenBg, border: `1px solid ${C.green}44`, borderRadius: 12, padding: '16px 20px', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: 14 }}>
           <span style={{ fontSize: 28 }}>🎉</span>
           <div>
             <div style={{ fontWeight: 700, fontSize: 16, color: C.green }}>Your app is live!</div>
-            <div style={{ fontSize: 13, color: '#166534', marginTop: 2 }}>
-              Migration completed successfully. Your app is now accessible to anyone in the world.
-            </div>
+            <div style={{ fontSize: 13, color: '#166534', marginTop: 2 }}>Migration completed successfully. Your app is now accessible to anyone in the world.</div>
           </div>
         </div>
       )}
 
-      {/* Failure banner */}
+      {/* ── Failure banner ── */}
       {isFailed && (
-        <div style={{
-          background: '#FFF1F2', border: `1px solid ${C.red}44`,
-          borderRadius: 12, padding: '16px 20px', marginBottom: '1.5rem',
-          display: 'flex', alignItems: 'center', gap: 14,
-        }}>
+        <div style={{ background: '#FFF1F2', border: `1px solid ${C.red}44`, borderRadius: 12, padding: '16px 20px', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: 14 }}>
           <span style={{ fontSize: 28 }}>⚠️</span>
           <div>
             <div style={{ fontWeight: 700, fontSize: 16, color: C.red }}>Migration failed</div>
@@ -112,13 +104,9 @@ export default function MigrationDetail() {
         </div>
       )}
 
-      {/* Live URLs — shown when complete */}
+      {/* ── Live URLs ── */}
       {isComplete && migration.deployed_urls && (
-        <div style={{
-          background: '#fff', borderRadius: 12,
-          border: `1px solid ${C.border}`,
-          padding: '1.25rem 1.5rem', marginBottom: '1.5rem',
-        }}>
+        <div style={{ background: '#fff', borderRadius: 12, border: `1px solid ${C.border}`, padding: '1.25rem 1.5rem', marginBottom: '1.5rem' }}>
           <div style={{ fontWeight: 700, fontSize: 14, color: C.ink, marginBottom: 12 }}>🔗 Your live links</div>
           {[
             { key: 'frontend', icon: '🌐', label: 'Your app (what visitors see)' },
@@ -129,15 +117,8 @@ export default function MigrationDetail() {
               <div style={{ fontSize: 12, color: C.inkMid, marginBottom: 3 }}>{item.icon} {item.label}</div>
               <a
                 href={migration.deployed_urls[item.key]}
-                target="_blank"
-                rel="noreferrer"
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '10px 14px', background: C.surface,
-                  border: `1px solid ${C.border}`, borderRadius: 8,
-                  color: C.amber, fontWeight: 700, fontSize: 14,
-                  textDecoration: 'none', wordBreak: 'break-all',
-                }}
+                target="_blank" rel="noreferrer"
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, color: C.amber, fontWeight: 700, fontSize: 14, textDecoration: 'none', wordBreak: 'break-all' }}
               >
                 <span>{migration.deployed_urls[item.key]}</span>
                 <span style={{ flexShrink: 0, marginLeft: 8 }}>↗</span>
@@ -147,13 +128,9 @@ export default function MigrationDetail() {
         </div>
       )}
 
-      {/* Analysis */}
+      {/* ── Analysis ── */}
       {migration.analysis_result && (
-        <div style={{
-          background: '#fff', borderRadius: 12,
-          border: `1px solid ${C.border}`,
-          padding: '1.5rem', marginBottom: '1.5rem',
-        }}>
+        <div style={{ background: '#fff', borderRadius: 12, border: `1px solid ${C.border}`, padding: '1.5rem', marginBottom: '1.5rem' }}>
           <h3 style={{ margin: '0 0 1rem', fontSize: 15, color: C.ink }}>Analysis</h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
             {Object.entries(migration.analysis_result)
@@ -168,33 +145,25 @@ export default function MigrationDetail() {
         </div>
       )}
 
-      {/* Live Logs */}
+      {/* ── Live Logs ── */}
       {logs.length > 0 && (
         <div style={{ background: '#111', borderRadius: 12, padding: '1.5rem', marginBottom: '1.5rem' }}>
           <div style={{ fontSize: 12, color: '#6B6860', fontFamily: 'monospace', marginBottom: 8 }}>// deployment log</div>
           {logs.map((l, i) => (
-            <div key={i} style={{
-              fontFamily: 'monospace', fontSize: 13, lineHeight: 1.8,
-              color: l.level === 'success' ? '#4ade80' : l.level === 'error' ? '#f87171' : '#a3a3a3',
-            }}>
+            <div key={i} style={{ fontFamily: 'monospace', fontSize: 13, lineHeight: 1.8, color: l.level === 'success' ? '#4ade80' : l.level === 'error' ? '#f87171' : '#a3a3a3' }}>
               {l.message}
             </div>
           ))}
         </div>
       )}
 
-      {/* ─── What Happens Next — only shown on successful migrations ─── */}
+      {/* ── Cost estimate card (Task 16) — shown only for completed migrations ── */}
+      {isComplete && <CostEstimateCard migration={migration} />}
+
+      {/* ── What Happens Next ── */}
       {isComplete && (
-        <div style={{
-          background: '#fff', borderRadius: 16,
-          border: `1px solid ${C.border}`,
-          padding: '24px 28px', marginTop: '1.5rem',
-          boxShadow: '0 2px 16px rgba(0,0,0,.05)',
-        }}>
-          <WhatHappensNext
-            deployedUrls={migration.deployed_urls}
-            sourcePlatform={migration.source_platform}
-          />
+        <div style={{ background: '#fff', borderRadius: 16, border: `1px solid ${C.border}`, padding: '24px 28px', marginTop: '1.5rem', boxShadow: '0 2px 16px rgba(0,0,0,.05)' }}>
+          <WhatHappensNext deployedUrls={migration.deployed_urls} sourcePlatform={migration.source_platform} />
         </div>
       )}
     </Layout>
