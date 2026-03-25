@@ -10,6 +10,7 @@ import { migrations } from '../lib/api';
 import { useWizardStore } from '../lib/store';
 import { useMigrationSocket } from '../hooks/useSocket';
 import Term from '../components/Term';
+import TokenWalkthrough from '../components/TokenWalkthrough';
 
 const C = {
   amber: '#D97706', amberBg: '#FEF3C7', amberDark: '#B45309',
@@ -103,8 +104,6 @@ function StepSource({ onNext }) {
       <p style={{ color: C.inkMid, fontSize: 14, marginBottom: 24, lineHeight: 1.6 }}>
         Just tell us where your app lives. We'll handle everything else.
       </p>
-
-      {/* Source buttons */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
         {SOURCES.map(s => (
           <button key={s.id} onClick={() => { setSource(s.id); setError(''); }} style={{
@@ -122,13 +121,9 @@ function StepSource({ onNext }) {
           </button>
         ))}
       </div>
-
-      {/* What is this? explanation */}
       <InfoBox icon="💡" color={C.amber} bg={C.amberBg}>
         <strong>What is {selected?.name}?</strong> {selected?.what}
       </InfoBox>
-
-      {/* URL input */}
       <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
         Paste your {selected?.name} link here
       </label>
@@ -145,8 +140,6 @@ function StepSource({ onNext }) {
       <p style={{ fontSize: 12, color: C.inkLight, marginBottom: 16 }}>
         Copy the link from your browser address bar when you're looking at your project.
       </p>
-
-      {/* Replit token */}
       {source === 'replit' && (
         <div style={{ marginBottom: 16 }}>
           <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
@@ -169,8 +162,6 @@ function StepSource({ onNext }) {
           </p>
         </div>
       )}
-
-      {/* Branch */}
       <details style={{ marginBottom: 20 }}>
         <summary style={{ fontSize: 13, color: C.inkMid, cursor: 'pointer', userSelect: 'none' }}>
           Advanced: specify a <Term id="branch">branch</Term> (optional)
@@ -187,13 +178,11 @@ function StepSource({ onNext }) {
           />
         </div>
       </details>
-
       {error && (
         <div style={{ background: C.redBg, border: `1px solid ${C.red}44`, borderRadius: 8, padding: '10px 14px', color: C.red, fontSize: 13, marginBottom: 16 }}>
           {error}
         </div>
       )}
-
       <button onClick={handleNext} style={{
         width: '100%', padding: '14px', background: C.amber, color: '#fff',
         border: 'none', borderRadius: 10, fontWeight: 700, fontSize: 16, cursor: 'pointer',
@@ -292,6 +281,7 @@ const PLATFORM_GUIDES = [
   },
 ];
 
+// ─── PlatformGuide — now includes TokenWalkthrough ────────────────────────────
 function PlatformGuide({ guide, value, onChange }) {
   const [open, setOpen] = useState(false);
   const saved = value && value.length > 6;
@@ -302,6 +292,7 @@ function PlatformGuide({ guide, value, onChange }) {
       borderRadius: 12, overflow: 'hidden', marginBottom: 12,
       transition: 'border-color .2s',
     }}>
+      {/* Accordion header */}
       <button onClick={() => setOpen(!open)} style={{
         width: '100%', display: 'flex', alignItems: 'center', gap: 14,
         padding: '14px 16px', background: saved ? C.greenBg : open ? C.amberBg : '#fff',
@@ -326,14 +317,19 @@ function PlatformGuide({ guide, value, onChange }) {
         </div>
       </button>
 
+      {/* Expanded body */}
       {open && (
         <div style={{ padding: '16px 18px', borderTop: `1px solid ${C.border}`, background: '#fff' }}>
+
+          {/* What / Why boxes */}
           <InfoBox icon="💡" color={C.amber} bg={C.amberBg}>
             <strong>What is <Term id={guide.termId}>{guide.name}</Term>?</strong> {guide.what}
           </InfoBox>
           <InfoBox icon="❓" color={C.blue} bg={C.blueBg}>
             <strong>Why do we need it?</strong> {guide.why}
           </InfoBox>
+
+          {/* Text steps */}
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginBottom: 10 }}>
               How to get your <Term id={guide.termId}>{guide.name}</Term> <Term id="api-key">key</Term> (2 minutes):
@@ -349,11 +345,18 @@ function PlatformGuide({ guide, value, onChange }) {
               </div>
             ))}
           </div>
+
+          {/* ── Visual walkthrough ── Task 12 addition */}
+          <TokenWalkthrough platformId={guide.id} />
+
+          {/* CTA link */}
           <a href={guide.link} target="_blank" rel="noreferrer" style={{
             display: 'block', width: '100%', padding: '11px', background: C.ink, color: '#fff',
             borderRadius: 8, textAlign: 'center', fontWeight: 700, fontSize: 14,
             textDecoration: 'none', marginBottom: 14, boxSizing: 'border-box',
           }}>{guide.linkLabel}</a>
+
+          {/* Token input */}
           <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
             Paste your <Term id={guide.termId}>{guide.name}</Term> <Term id="api-key">key</Term> here:
           </label>
@@ -377,6 +380,7 @@ function PlatformGuide({ guide, value, onChange }) {
   );
 }
 
+// ─── StepConfigure ────────────────────────────────────────────────────────────
 function StepConfigure({ onNext, onBack, setMigId }) {
   const { platforms, setPlatform, plan, setPlan, repoUrl, branch } = useWizardStore();
   const [keys, setKeys] = useState({ anthropicKey: '', supabaseKey: '', vercelKey: '', railwayKey: '' });
@@ -455,9 +459,7 @@ function StepConfigure({ onNext, onBack, setMigId }) {
               style={{ width: 18, height: 18, accentColor: C.amber, flexShrink: 0 }} />
             <span style={{ fontSize: 20 }}>{p.icon}</span>
             <div>
-              <div style={{ fontWeight: 600, fontSize: 14, color: C.ink }}>
-                <Term id={p.termId}>{p.label}</Term>
-              </div>
+              <div style={{ fontWeight: 600, fontSize: 14, color: C.ink }}><Term id={p.termId}>{p.label}</Term></div>
               <div style={{ fontSize: 11, color: C.inkMid }}>{p.desc}</div>
             </div>
           </label>
@@ -528,7 +530,6 @@ function StepPayment({ onNext, onBack, migrationId }) {
     <div>
       <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 26, color: C.ink, marginBottom: 6 }}>Ready to go live?</h2>
       <p style={{ color: C.inkMid, fontSize: 14, marginBottom: 24, lineHeight: 1.6 }}>You're one step away from having a professional, live app.</p>
-
       <div style={{ background: C.greenBg, border: `1px solid ${C.green}44`, borderRadius: 12, padding: '16px 18px', marginBottom: 20 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: C.green, marginBottom: 10 }}>💰 What you're getting</div>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -544,7 +545,6 @@ function StepPayment({ onNext, onBack, migrationId }) {
           <span style={{ fontSize: 15, fontWeight: 700, color: C.green }}>{price} · 3 minutes</span>
         </div>
       </div>
-
       <div style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 12, padding: '16px 18px', marginBottom: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginBottom: 12 }}>Order summary</div>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -560,16 +560,13 @@ function StepPayment({ onNext, onBack, migrationId }) {
           <span style={{ fontWeight: 700, fontSize: 22, color: C.amber }}>{price}</span>
         </div>
       </div>
-
       <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10, padding: '12px 16px', marginBottom: 20 }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: '#166534', marginBottom: 4 }}>🛡 100% Money-Back Guarantee</div>
         <div style={{ fontSize: 13, color: '#166534', lineHeight: 1.6 }}>
           If your <Term id="migration">migration</Term> fails for <em>any</em> reason, your payment is automatically refunded in full within 24 hours. No questions asked.
         </div>
       </div>
-
       {error && <div style={{ background: C.redBg, border: `1px solid ${C.red}44`, borderRadius: 8, padding: '12px 14px', color: C.red, fontSize: 13, marginBottom: 16 }}>{error}</div>}
-
       <div style={{ display: 'flex', gap: 10 }}>
         <button onClick={onBack} style={{ flex: 1, padding: 12, background: '#fff', color: C.ink, border: `2px solid ${C.border}`, borderRadius: 8, fontWeight: 600, cursor: 'pointer' }}>← Back</button>
         <button onClick={handlePay} disabled={loading} style={{
@@ -610,7 +607,6 @@ function StepRunning({ migrationId }) {
         Please keep this tab open. This usually takes 2–5 minutes.
         A live <Term id="websocket">connection</Term> keeps this page updated automatically.
       </p>
-
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
           <span style={{ fontSize: 13, color: C.inkMid }}>Overall progress</span>
@@ -620,7 +616,6 @@ function StepRunning({ migrationId }) {
           <div style={{ height: '100%', background: `linear-gradient(90deg, ${C.amber}, ${C.amberDark})`, width: `${progress}%`, borderRadius: 4, transition: 'width .5s ease' }} />
         </div>
       </div>
-
       <div style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden', marginBottom: 20 }}>
         {allTasks.map((id, i) => {
           const done = completedTasks.includes(id);
@@ -649,7 +644,6 @@ function StepRunning({ migrationId }) {
           );
         })}
       </div>
-
       <InfoBox icon="☕" color={C.amber} bg={C.amberBg}>
         <strong>Good time for a coffee break!</strong> We're doing the equivalent of 2–5 days of developer work in the background.
       </InfoBox>
@@ -671,7 +665,6 @@ function StepDone({ migrationId }) {
         Congratulations! Your app is now professionally <Term id="deployment">deployed</Term> and accessible to anyone in the world.
       </p>
       <p style={{ color: C.green, fontSize: 14, fontWeight: 700, marginBottom: 28 }}>You just saved approximately {savings} in developer fees 🚀</p>
-
       {deployedUrls && (
         <div style={{ background: C.greenBg, border: `1px solid ${C.green}44`, borderRadius: 12, padding: '20px', marginBottom: 24, textAlign: 'left' }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: C.green, marginBottom: 14 }}>✓ Your live app links</div>
@@ -693,12 +686,11 @@ function StepDone({ migrationId }) {
           ))}
         </div>
       )}
-
       <div style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 12, padding: '20px', marginBottom: 24, textAlign: 'left' }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: C.ink, marginBottom: 14 }}>📋 What happens next?</div>
         {[
           { icon: '🔗', title: 'Add your own domain name', desc: <span>Want yourappname.com? Go to your <Term id="vercel">Vercel</Term> dashboard and click "Add <Term id="domain">Domain</Term>". It takes 5 minutes.</span> },
-          { icon: '🔄', title: 'Update your app', desc: <span>Made changes to your code? Push to <Term id="github">GitHub</Term>/<Term id="replit">Replit</Term> and run a new <Term id="migration">migration</Term>, or re-deploy from your <Term id="vercel">Vercel</Term> dashboard.</span> },
+          { icon: '🔄', title: 'Update your app', desc: <span>Made changes to your code? Use the "Push a Change" button on your dashboard — no GitHub needed.</span> },
           { icon: '📊', title: 'Monitor your app', desc: <span>Watch traffic and errors in your <Term id="railway">Railway</Term> and <Term id="vercel">Vercel</Term> dashboards. Both have free tiers that are plenty for starting out.</span> },
           { icon: '🆘', title: 'Something not working?', desc: 'Email us at support@migratebot.io — if it\'s our fault, we\'ll fix it for free.' },
         ].map(item => (
@@ -711,7 +703,6 @@ function StepDone({ migrationId }) {
           </div>
         ))}
       </div>
-
       <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
         <button onClick={() => router.push(`/migrations/${migrationId}`)} style={{
           padding: '12px 22px', background: '#fff', color: C.ink,
