@@ -9,6 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import { useMigrations } from '../hooks/useMigrations';
 import StatusBadge from '../components/StatusBadge';
 import Layout from '../components/Layout';
+import Term from '../components/Term';
 
 const C = {
   amber: '#D97706', amberBg: '#FEF3C7', amberDark: '#B45309',
@@ -24,7 +25,7 @@ function ClaudeChat({ migration }) {
   const [messages, setMessages] = useState([
     {
       role: 'assistant',
-      text: `Hi! I\'m Claude, the AI that helped deploy your app. I know all about your project — feel free to ask me anything! For example:\n\n• “How do I add a custom domain?”\n• “How do I update my app after making changes?”\n• “Why is my app slow?”`,
+      text: `Hi! I'm Claude, the AI that helped deploy your app. I know all about your project — feel free to ask me anything! For example:\n\n• "How do I add a custom domain?"\n• "How do I update my app after making changes?"\n• "Why is my app slow?"`,
     },
   ]);
   const [input, setInput] = useState('');
@@ -84,8 +85,8 @@ function ClaudeChat({ migration }) {
         >
           <span style={{ fontSize: 24 }}>🤖</span>
           <div style={{ textAlign: 'left' }}>
-            <div style={{ fontWeight: 700, fontSize: 15, color: C.ink }}>Ask Claude about your app</div>
-            <div style={{ fontSize: 12, color: C.inkMid, marginTop: 2 }}>Powered by your Anthropic key — ask anything about your deployed app</div>
+            <div style={{ fontWeight: 700, fontSize: 15, color: C.ink }}>Ask <Term id="claude">Claude</Term> about your app</div>
+            <div style={{ fontSize: 12, color: C.inkMid, marginTop: 2 }}>Powered by your <Term id="anthropic">Anthropic</Term> key — ask anything about your <Term id="deployment">deployed</Term> app</div>
           </div>
           <span style={{ marginLeft: 'auto', color: C.amber, fontSize: 18 }}>▼</span>
         </button>
@@ -106,8 +107,8 @@ function ClaudeChat({ migration }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ fontSize: 20 }}>🤖</span>
               <div>
-                <div style={{ fontWeight: 700, fontSize: 14, color: C.ink }}>Claude — Your App Assistant</div>
-                <div style={{ fontSize: 11, color: C.inkMid }}>Powered by your Anthropic API key</div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: C.ink }}><Term id="claude">Claude</Term> — Your App Assistant</div>
+                <div style={{ fontSize: 11, color: C.inkMid }}>Powered by your <Term id="api-key">Anthropic API key</Term></div>
               </div>
             </div>
             <button onClick={() => setOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.inkLight, fontSize: 18 }}>×</button>
@@ -145,7 +146,7 @@ function ClaudeChat({ migration }) {
                   background: '#fff', border: `1px solid ${C.border}`,
                   fontSize: 14, color: C.inkLight,
                 }}>
-                  Claude is thinking…
+                  <Term id="claude">Claude</Term> is thinking…
                 </div>
               </div>
             )}
@@ -232,7 +233,7 @@ function YourAppSection({ migration }) {
           <div>
             <div style={{ fontWeight: 700, fontSize: 17, color: C.ink }}>Your App is Live!</div>
             <div style={{ fontSize: 13, color: C.inkMid, marginTop: 2 }}>
-              {migration.reponame || migration.repourl} — deployed {new Date(migration.updated_at || migration.created_at).toLocaleDateString()}
+              {migration.reponame || migration.repourl} — <Term id="deployment">deployed</Term> {new Date(migration.updated_at || migration.created_at).toLocaleDateString()}
             </div>
           </div>
         </div>
@@ -253,7 +254,7 @@ function YourAppSection({ migration }) {
             borderRadius: 10, padding: '14px 16px', marginBottom: 20,
           }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: C.blue, marginBottom: 6 }}>
-              📋 What we deployed for you
+              📋 What we <Term id="deployment">deployed</Term> for you
             </div>
             <p style={{ fontSize: 14, color: C.inkMid, lineHeight: 1.7, margin: 0 }}>
               We took your code from <strong style={{ color: C.ink }}>{migration.source_platform || 'your source'}</strong> and
@@ -346,7 +347,7 @@ export default function Dashboard() {
           <h1 style={{ fontFamily: 'Georgia, serif', fontSize: 28, color: '#1A1814', margin: 0 }}>Dashboard</h1>
           <p style={{ color: '#6B6860', marginTop: 4 }}>Welcome back, {user?.name || user?.email}</p>
         </div>
-        <Link href="/migrate" style={{ padding: '10px 20px', background: '#D97706', color: '#fff', borderRadius: 8, textDecoration: 'none', fontWeight: 600, fontSize: 14 }}>+ New Migration</Link>
+        <Link href="/migrate" style={{ padding: '10px 20px', background: '#D97706', color: '#fff', borderRadius: 8, textDecoration: 'none', fontWeight: 600, fontSize: 14 }}>+ New <Term id="migration">Migration</Term></Link>
       </div>
 
       {/* Your App section — only shown after a successful migration */}
@@ -373,13 +374,13 @@ export default function Dashboard() {
       {/* Migrations list */}
       <div style={{ background: '#fff', borderRadius: 12, border: '1px solid #E5E2DA' }}>
         <div style={{ padding: '1rem 1.5rem', borderBottom: '1px solid #E5E2DA', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontWeight: 600, color: '#1A1814' }}>Migrations</span>
+          <span style={{ fontWeight: 600, color: '#1A1814' }}><Term id="migration">Migrations</Term></span>
           <button onClick={refresh} style={{ background: 'none', border: 'none', color: '#D97706', cursor: 'pointer', fontSize: 13 }}>Refresh</button>
         </div>
         {migrations.length === 0 ? (
           <div style={{ padding: '3rem', textAlign: 'center', color: '#6B6860' }}>
             <div style={{ fontSize: 48, marginBottom: 12 }}>🚀</div>
-            <p>No migrations yet. <Link href="/migrate" style={{ color: '#D97706' }}>Start your first one!</Link></p>
+            <p>No <Term id="migration">migrations</Term> yet. <Link href="/migrate" style={{ color: '#D97706' }}>Start your first one!</Link></p>
           </div>
         ) : (
           migrations.map(m => (

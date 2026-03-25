@@ -110,6 +110,10 @@ export const TERMS = {
     label: 'Payment Intent',
     tip: 'A payment intent is a behind-the-scenes record that tracks a payment as it\'s being processed — it ensures the transaction is completed safely and exactly once.',
   },
+  jwt: {
+    label: 'JWT (JSON Web Token)',
+    tip: 'A JWT is a tiny, tamper-proof ticket your app issues when you log in. Every request you make carries this ticket so the server knows who you are — no password re-entry needed.',
+  },
 };
 
 export default function Term({ id, children }) {

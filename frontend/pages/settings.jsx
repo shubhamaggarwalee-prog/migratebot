@@ -7,6 +7,7 @@ import { useRouter } from 'next/router';
 import Head from 'next/head';
 import { useAuthStore } from '../lib/store';
 import { post, get } from '../lib/api';
+import Term from '../components/Term';
 
 const C = {
   amber: '#D97706', amberBg: '#FEF3C7', ink: '#1A1814',
@@ -110,7 +111,9 @@ function TabSecurity({ user }) {
       <div style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: 20 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
           <div>
-            <div style={{ fontWeight: 600, fontSize: 15, color: C.ink }}>Two-factor authentication</div>
+            <div style={{ fontWeight: 600, fontSize: 15, color: C.ink }}>
+              <Term id="2fa">Two-factor authentication</Term>
+            </div>
             <div style={{ fontSize: 13, color: C.inkMid, marginTop: 2 }}>Add a second layer of security to your account.</div>
           </div>
           <div style={{
@@ -123,17 +126,23 @@ function TabSecurity({ user }) {
 
       {/* IDLE — not set up */}
       {status === 'idle' && (
-        <button onClick={startSetup} style={{
-          width: '100%', padding: '12px', background: C.amber, color: '#fff',
-          border: 'none', borderRadius: 8, fontWeight: 700, cursor: 'pointer', marginBottom: 12,
-        }}>Enable 2FA</button>
+        <div>
+          <p style={{ fontSize: 13, color: C.inkMid, marginBottom: 12, lineHeight: 1.6 }}>
+            <Term id="2fa">Two-factor authentication (2FA)</Term> adds a second verification step when you sign in.
+            Even if someone knows your password, they still can't access your account without your phone.
+          </p>
+          <button onClick={startSetup} style={{
+            width: '100%', padding: '12px', background: C.amber, color: '#fff',
+            border: 'none', borderRadius: 8, fontWeight: 700, cursor: 'pointer', marginBottom: 12,
+          }}>Enable <Term id="2fa">2FA</Term></button>
+        </div>
       )}
 
       {/* SETUP — show QR code */}
       {status === 'setup' && (
         <div>
           <p style={{ fontSize: 14, color: C.inkMid, marginBottom: 16 }}>
-            Scan this QR code with <strong>Google Authenticator</strong>, <strong>Authy</strong>, or any TOTP app.
+            Scan this QR code with <strong>Google Authenticator</strong>, <strong>Authy</strong>, or any <Term id="totp">TOTP</Term> app.
           </p>
           {/* QR code rendered as img via qrUri data URL from backend */}
           <div style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 10, padding: 16, textAlign: 'center', marginBottom: 16 }}>
@@ -145,8 +154,10 @@ function TabSecurity({ user }) {
           <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', fontSize: 12, fontFamily: 'monospace', letterSpacing: '.1em', textAlign: 'center', marginBottom: 16, color: C.ink }}>
             {secret}
           </div>
-          <p style={{ fontSize: 12, color: C.inkLight, marginBottom: 16 }}>Or enter the key above manually.</p>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>Verification code</label>
+          <p style={{ fontSize: 12, color: C.inkLight, marginBottom: 16 }}>Or enter the key above manually into your <Term id="totp">TOTP</Term> app.</p>
+          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
+            <Term id="totp">Verification code</Term>
+          </label>
           <input
             value={code} onChange={e => { setCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setError(''); }}
             placeholder="000000" maxLength={6}
@@ -164,8 +175,10 @@ function TabSecurity({ user }) {
       {status === 'confirmed' && backupCodes.length > 0 && (
         <div>
           <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 10, padding: '1rem', marginBottom: 16 }}>
-            <p style={{ fontSize: 14, fontWeight: 600, color: '#92400E', marginBottom: 8 }}>⚠ Save your backup codes</p>
-            <p style={{ fontSize: 13, color: '#78350F', marginBottom: 12 }}>Store these somewhere safe. Each can only be used once to sign in if you lose your authenticator.</p>
+            <p style={{ fontSize: 14, fontWeight: 600, color: '#92400E', marginBottom: 8 }}>⚠ Save your <Term id="backup-codes">backup codes</Term></p>
+            <p style={{ fontSize: 13, color: '#78350F', marginBottom: 12 }}>
+              Store these somewhere safe. Each <Term id="backup-codes">backup code</Term> can only be used once to sign in if you lose your <Term id="totp">authenticator app</Term>.
+            </p>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 10 }}>
               {backupCodes.map((c, i) => (
                 <button key={i} onClick={() => copyBackup(c)} title="Click to copy" style={{
@@ -174,7 +187,7 @@ function TabSecurity({ user }) {
                 }}>{c}</button>
               ))}
             </div>
-            <button onClick={copyAllBackup} style={{ width: '100%', padding: '8px', background: '#fff', border: '1px solid #FDE68A', borderRadius: 6, fontSize: 13, fontWeight: 600, color: '#92400E', cursor: 'pointer' }}>Copy all backup codes</button>
+            <button onClick={copyAllBackup} style={{ width: '100%', padding: '8px', background: '#fff', border: '1px solid #FDE68A', borderRadius: 6, fontSize: 13, fontWeight: 600, color: '#92400E', cursor: 'pointer' }}>Copy all <Term id="backup-codes">backup codes</Term></button>
           </div>
           <button onClick={() => setStatus('enabled')} style={{ width: '100%', padding: 12, background: C.green, color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, cursor: 'pointer' }}>I've saved my codes ✓</button>
         </div>
@@ -183,15 +196,17 @@ function TabSecurity({ user }) {
       {/* ENABLED — manage / disable */}
       {status === 'enabled' && (
         <div>
-          <p style={{ fontSize: 14, color: C.inkMid, marginBottom: 16 }}>2FA is active. To disable, enter your current authenticator code.</p>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>Current code</label>
+          <p style={{ fontSize: 14, color: C.inkMid, marginBottom: 16 }}>
+            <Term id="2fa">2FA</Term> is active. To disable, enter your current <Term id="totp">authenticator code</Term>.
+          </p>
+          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>Current <Term id="totp">code</Term></label>
           <input
             value={code} onChange={e => { setCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setError(''); }}
             placeholder="000000" maxLength={6}
             style={{ width: '100%', padding: '12px', border: `1px solid ${error ? C.red : C.border}`, borderRadius: 8, fontSize: 20, letterSpacing: '.25em', textAlign: 'center', boxSizing: 'border-box', marginBottom: 12 }}
           />
           {error && <p style={{ color: C.red, fontSize: 13, marginBottom: 8 }}>{error}</p>}
-          <button onClick={disable2fa} style={{ width: '100%', padding: 12, background: C.red, color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, cursor: 'pointer' }}>Disable 2FA</button>
+          <button onClick={disable2fa} style={{ width: '100%', padding: 12, background: C.red, color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, cursor: 'pointer' }}>Disable <Term id="2fa">2FA</Term></button>
         </div>
       )}
 
