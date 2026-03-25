@@ -1,6 +1,5 @@
 /**
  * backend/server.js
- * Express app entry point
  */
 const express    = require('express');
 const http       = require('http');
@@ -14,12 +13,10 @@ const io     = new Server(server, {
   cors: { origin: process.env.FRONTEND_URL || 'http://localhost:3000', methods: ['GET', 'POST'] },
 });
 
-// ── Middleware ────────────────────────────────────────────────────────────────
 app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials: true }));
-app.use(express.json({ limit: '25mb' }));   // increased for ZIP/paste payloads
+app.use(express.json({ limit: '25mb' }));
 app.set('io', io);
 
-// ── Routes ────────────────────────────────────────────────────────────────────
 app.use('/api/auth',          require('./routes/auth'));
 app.use('/api/migrations',    require('./routes/migrations'));
 app.use('/api/credentials',   require('./routes/credentials'));
@@ -31,15 +28,14 @@ app.use('/api/webhooks',      require('./routes/webhooks'));
 app.use('/api/2fa',           require('./routes/twoFactor'));
 app.use('/api/password',      require('./routes/passwordReset'));
 app.use('/api/verify-email',  require('./routes/emailVerification'));
-app.use('/api/push-change',   require('./routes/pushChange'));      // Task 11
-app.use('/api/upload-source', require('./routes/uploadSource'));    // Task 13
+app.use('/api/push-change',   require('./routes/pushChange'));       // Task 11 (simple)
+app.use('/api/upload-source', require('./routes/uploadSource'));     // Task 13
+app.use('/api/update-deploy', require('./routes/updateDeploy'));     // Task 14
 
-// ── WebSocket ─────────────────────────────────────────────────────────────────
 io.on('connection', socket => {
   socket.on('join',  room => socket.join(room));
   socket.on('leave', room => socket.leave(room));
 });
 
-// ── Start ─────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => console.log(`MigrateBot backend running on :${PORT}`));
