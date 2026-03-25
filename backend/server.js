@@ -1,105 +1,44 @@
 /**
  * backend/server.js
- * Main Express server entry point
+ * Express app entry point
  */
-require('dotenv').config();
-const express = require('express');
-const cors    = require('cors');
-const helmet  = require('helmet');
-const morgan  = require('morgan');
-const http    = require('http');
+const express    = require('express');
+const http       = require('http');
+const cors       = require('cors');
 const { Server } = require('socket.io');
-
-const logger      = require('./utils/logger');
-const { initSchema } = require('./utils/database');
-const { initQueue }  = require('./utils/queue');
-
-// ─── Route imports ────────────────────────────────────────────────────────────
-const authRoutes              = require('./routes/auth');
-const migrationRoutes         = require('./routes/migrations');
-const webhookRoutes           = require('./routes/webhooks');
-const healthRoutes            = require('./routes/health');
-const credentialRoutes        = require('./routes/credentials');
-const billingRoutes           = require('./routes/billing');
-const twoFactorRoutes         = require('./routes/twoFactor');
-const emailVerificationRoutes = require('./routes/emailVerification');
-const notificationRoutes      = require('./routes/notifications');
-const passwordResetRoutes     = require('./routes/passwordReset');
-const chatRoutes              = require('./routes/chat');
+require('dotenv').config();
 
 const app    = express();
 const server = http.createServer(app);
-
-// ─── CORS ─────────────────────────────────────────────────────────────────────
-const allowedOrigins = [
-  process.env.FRONTEND_URL,
-  'http://localhost:3000',
-  'http://localhost:3001',
-].filter(Boolean);
-
-function corsOrigin(origin, callback) {
-  // Allow requests with no origin (mobile apps, curl, Postman)
-  if (!origin) return callback(null, true);
-  // Allow any vercel.app subdomain (preview deployments)
-  if (origin.endsWith('.vercel.app')) return callback(null, true);
-  // Allow explicitly listed origins
-  if (allowedOrigins.includes(origin)) return callback(null, true);
-  callback(new Error(`CORS blocked: ${origin}`));
-}
-
-const corsOptions = { origin: corsOrigin, credentials: true };
-
-const io = new Server(server, {
-  cors: { origin: corsOrigin, methods: ['GET', 'POST'] },
+const io     = new Server(server, {
+  cors: { origin: process.env.FRONTEND_URL || 'http://localhost:3000', methods: ['GET', 'POST'] },
 });
 
-// ─── Middleware ───────────────────────────────────────────────────────────────
-app.use(helmet());
-app.use(cors(corsOptions));
-app.use(morgan('combined', { stream: logger.stream }));
-
-// Raw body for Stripe webhooks — must come before express.json()
-app.use('/webhooks', express.raw({ type: 'application/json' }));
+// ── Middleware ──────────────────────────────────────────────────────────────
+app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials: true }));
 app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.set('io', io);
 
-// Attach Socket.io instance to every request
-app.use((req, _res, next) => { req.io = io; next(); });
+// ── Routes ──────────────────────────────────────────────────────────────────
+app.use('/api/auth',         require('./routes/auth'));
+app.use('/api/migrations',   require('./routes/migrations'));
+app.use('/api/credentials',  require('./routes/credentials'));
+app.use('/api/billing',      require('./routes/billing'));
+app.use('/api/chat',         require('./routes/chat'));
+app.use('/api/notifications',require('./routes/notifications'));
+app.use('/api/health',       require('./routes/health'));
+app.use('/api/webhooks',     require('./routes/webhooks'));
+app.use('/api/2fa',          require('./routes/twoFactor'));
+app.use('/api/password',     require('./routes/passwordReset'));
+app.use('/api/verify-email', require('./routes/emailVerification'));
+app.use('/api/push-change',  require('./routes/pushChange'));   // ← Task 11
 
-// ─── Routes ───────────────────────────────────────────────────────────────────
-app.use('/auth',                  authRoutes);
-app.use('/api/migrations',        migrationRoutes);
-app.use('/webhooks',              webhookRoutes);
-app.use('/health',                healthRoutes);
-app.use('/api/credentials',       credentialRoutes);
-app.use('/api/billing',           billingRoutes);
-app.use('/api/2fa',               twoFactorRoutes);
-app.use('/api/email',             emailVerificationRoutes);
-app.use('/api/notifications',     notificationRoutes);
-app.use('/api/auth',              passwordResetRoutes);
-app.use('/api/chat',              chatRoutes);
-
-// ─── 404 ──────────────────────────────────────────────────────────────────────
-app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
-
-// ─── Error handler ────────────────────────────────────────────────────────────
-app.use((err, _req, res, _next) => {
-  logger.error('Unhandled error:', { message: err.message, stack: err.stack });
-  res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
+// ── WebSocket ───────────────────────────────────────────────────────────────
+io.on('connection', socket => {
+  socket.on('join', room => socket.join(room));
+  socket.on('leave', room => socket.leave(room));
 });
 
-// ─── Boot ─────────────────────────────────────────────────────────────────────
-const PORT = process.env.PORT || 3001;
-
-async function start() {
-  await initSchema();
-  await initQueue(io);
-  server.listen(PORT, () => logger.info(`MigrateBot backend running on port ${PORT}`));
-}
-
-start().catch(err => {
-  logger.error('Startup failed:', err);
-  process.exit(1);
-});
-
-module.exports = { app, io };
+// ── Start ───────────────────────────────────────────────────────────────────
+const PORT = process.env.PORT || 4000;
+server.listen(PORT, () => console.log(`MigrateBot backend running on :${PORT}`));
