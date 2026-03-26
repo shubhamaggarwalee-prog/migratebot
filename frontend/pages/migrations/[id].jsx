@@ -3,6 +3,7 @@
  * Individual migration detail + real-time log + What Happens Next guide
  * Task 16: Added CostEstimateCard
  * Task 18: Added "Share Receipt" button in the success banner
+ * Gap 2:  Added "Resume Deployment" banner + button for paused/chat-needed migrations
  */
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
@@ -44,10 +45,13 @@ export default function MigrationDetail() {
     socket.on('migration:log',      entry      => setLogs(l => [...l, entry]));
     socket.on('migration:complete', ()         => setMigration(m => m ? { ...m, status: 'complete' } : m));
     socket.on('migration:error',    ({ error }) => setMigration(m => m ? { ...m, status: 'failed', error_message: error } : m));
+    // Gap 2: live status update when agent needs input
+    socket.on('agent:chat-needed',  ()         => setMigration(m => m ? { ...m, status: 'chat-needed' } : m));
     return () => {
       socket.off('migration:log');
       socket.off('migration:complete');
       socket.off('migration:error');
+      socket.off('agent:chat-needed');
     };
   }, [socket, id]);
 
@@ -67,6 +71,7 @@ export default function MigrationDetail() {
 
   const isComplete = migration.status === 'complete';
   const isFailed   = migration.status === 'failed';
+  const isPaused   = ['paused', 'chat-needed'].includes(migration.status);  // Gap 2
   const receiptUrl = `/receipt/${id}`;
 
   return (
@@ -91,7 +96,6 @@ export default function MigrationDetail() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {isComplete && (
             <>
-              {/* Share Receipt button */}
               <button
                 onClick={handleCopyReceipt}
                 style={{
@@ -119,6 +123,48 @@ export default function MigrationDetail() {
           <StatusBadge status={migration.status} />
         </div>
       </div>
+
+      {/* ── Gap 2: Paused / chat-needed banner ── */}
+      {isPaused && (
+        <div style={{
+          background: C.amberBg,
+          border: `2px solid ${C.amber}`,
+          borderRadius: 14, padding: '18px 22px',
+          marginBottom: '1.5rem',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <span style={{ fontSize: 30 }}>⏸</span>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 16, color: C.amberDark, marginBottom: 4 }}>
+                Deployment paused — the AI needs your help
+              </div>
+              <div style={{ fontSize: 13, color: C.inkMid, lineHeight: 1.6 }}>
+                Your deployment stopped mid-way because the AI agent hit something it couldn't
+                decide on its own. Answer one quick question and it will pick up right where it left off.
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => router.push(`/migrations/resume?id=${id}`)}
+            style={{
+              flexShrink: 0,
+              padding: '12px 22px',
+              background: C.amber,
+              color: '#fff',
+              border: 'none',
+              borderRadius: 10,
+              fontWeight: 700,
+              fontSize: 14,
+              cursor: 'pointer',
+              boxShadow: '0 4px 14px rgba(217,119,6,.3)',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            💬 Resume deployment →
+          </button>
+        </div>
+      )}
 
       {/* ── Success banner ── */}
       {isComplete && (
