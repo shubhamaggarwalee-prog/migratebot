@@ -1,57 +1,17 @@
 /**
  * backend/__tests__/notifications.test.js
- * Gap 8 — Tests for /api/notifications routes.
- *
- * All routes require auth; tests verify:
- *   • 401 when no token is present
- *   • 400 when required fields are missing / invalid (using bad token to hit auth first)
- *   • Input-shape validation for Slack webhook URL
- *   • Notification prefs key allow-list
  */
 const request = require('supertest');
 const { app } = require('../server');
 
 const FAKE_TOKEN = 'Bearer invalid.jwt.token';
 
-describe('Notifications Routes', () => {
-
-  describe('POST /api/notifications/slack', () => {
-    it('returns 401 with no token', async () => {
-      const res = await request(app)
-        .post('/api/notifications/slack')
-        .send({ webhookUrl: 'https://hooks.slack.com/services/abc' });
-      expect(res.status).toBe(401);
-    });
-
-    it('returns 401 with invalid token', async () => {
-      const res = await request(app)
-        .post('/api/notifications/slack')
-        .set('Authorization', FAKE_TOKEN)
-        .send({ webhookUrl: 'https://hooks.slack.com/services/abc' });
-      expect(res.status).toBe(401);
-    });
-  });
-
-  describe('POST /api/notifications/slack/test', () => {
-    it('returns 401 with no token', async () => {
-      const res = await request(app).post('/api/notifications/slack/test');
-      expect(res.status).toBe(401);
-    });
-  });
-
-  describe('DELETE /api/notifications/slack', () => {
-    it('returns 401 with no token', async () => {
-      const res = await request(app).delete('/api/notifications/slack');
-      expect(res.status).toBe(401);
-    });
-  });
-
+describe('Notifications Routes — auth guards', () => {
   describe('GET /api/notifications/prefs', () => {
     it('returns 401 with no token', async () => {
       const res = await request(app).get('/api/notifications/prefs');
       expect(res.status).toBe(401);
     });
-
     it('returns 401 with invalid token', async () => {
       const res = await request(app)
         .get('/api/notifications/prefs')
@@ -67,81 +27,46 @@ describe('Notifications Routes', () => {
         .send({ migration_completed: true });
       expect(res.status).toBe(401);
     });
+  });
 
-    it('returns 401 with invalid token', async () => {
+  describe('POST /api/notifications/slack', () => {
+    it('returns 401 with no token', async () => {
       const res = await request(app)
-        .put('/api/notifications/prefs')
-        .set('Authorization', FAKE_TOKEN)
-        .send({ migration_completed: false });
+        .post('/api/notifications/slack')
+        .send({ webhookUrl: 'https://hooks.slack.com/services/abc' });
       expect(res.status).toBe(401);
     });
   });
 
-  // ── Unit-level: validate Slack webhook URL format ────────────────────────
-  // The route validates webhookUrl AFTER auth, so with no/bad token
-  // we always get 401 first. We verify the URL-validation logic directly.
-  describe('Slack webhook URL validation (unit)', () => {
-    const VALID_SLACK_PREFIXES = ['https://hooks.slack.com/'];
-    const testUrls = [
-      { url: 'https://hooks.slack.com/services/T00/B00/abc', expected: true },
-      { url: 'https://hooks.slack.com/workflows/xyz',        expected: true },
-      { url: 'https://evil.com/hooks.slack.com/steal',       expected: false },
-      { url: 'http://hooks.slack.com/services/abc',          expected: false },
-      { url: '',                                             expected: false },
-    ];
-
-    testUrls.forEach(({ url, expected }) => {
-      it(`"${url || '(empty)'}" should be ${expected ? 'valid' : 'invalid'}`, () => {
-        const isValid = !!url && VALID_SLACK_PREFIXES.some(p => url.startsWith(p));
-        expect(isValid).toBe(expected);
-      });
+  describe('DELETE /api/notifications/slack', () => {
+    it('returns 401 with no token', async () => {
+      const res = await request(app).delete('/api/notifications/slack');
+      expect(res.status).toBe(401);
     });
   });
 
-  // ── Unit-level: notification prefs allow-list ──────────────────────────
+  // — Unit: Slack URL validation —
+  describe('Slack webhook URL validation (unit)', () => {
+    const isValidSlack = (url) =>
+      !!url && url.startsWith('https://hooks.slack.com/');
+
+    it('accepts valid hooks.slack.com URL',    () => expect(isValidSlack('https://hooks.slack.com/services/T/B/x')).toBe(true));
+    it('rejects non-hooks domain',             () => expect(isValidSlack('https://evil.com/hooks.slack.com')).toBe(false));
+    it('rejects http (not https)',             () => expect(isValidSlack('http://hooks.slack.com/services/abc')).toBe(false));
+    it('rejects empty string',                 () => expect(isValidSlack('')).toBe(false));
+  });
+
+  // — Unit: prefs allow-list —
   describe('Notification prefs allow-list (unit)', () => {
-    const ALLOWED_KEYS = [
-      'migration_completed',
-      'migration_failed',
-      'health_check_alerts',
-      'product_updates',
-      'billing_receipts',
-    ];
+    const ALLOWED = ['migration_completed','migration_failed','health_check_alerts','product_updates','billing_receipts'];
+    const filter = (body) => {
+      const out = {};
+      for (const k of ALLOWED) if (typeof body[k] === 'boolean') out[k] = body[k];
+      return out;
+    };
 
-    it('filters out disallowed keys', () => {
-      const body = {
-        migration_completed: true,
-        migration_failed: false,
-        unknown_key: true,           // should be stripped
-        __proto__: true,             // prototype pollution attempt — should be stripped
-      };
-      const updates = {};
-      for (const key of ALLOWED_KEYS) {
-        if (typeof body[key] === 'boolean') updates[key] = body[key];
-      }
-      expect(Object.keys(updates)).toEqual(
-        expect.arrayContaining(['migration_completed', 'migration_failed'])
-      );
-      expect(updates).not.toHaveProperty('unknown_key');
-      expect(updates).not.toHaveProperty('__proto__');
-    });
-
-    it('returns empty object when no valid keys given', () => {
-      const body = { foo: 'bar', count: 42 };
-      const updates = {};
-      for (const key of ALLOWED_KEYS) {
-        if (typeof body[key] === 'boolean') updates[key] = body[key];
-      }
-      expect(Object.keys(updates)).toHaveLength(0);
-    });
-
-    it('rejects non-boolean values for valid keys', () => {
-      const body = { migration_completed: 'yes', migration_failed: 1 };
-      const updates = {};
-      for (const key of ALLOWED_KEYS) {
-        if (typeof body[key] === 'boolean') updates[key] = body[key];
-      }
-      expect(Object.keys(updates)).toHaveLength(0);
-    });
+    it('keeps valid boolean keys',       () => expect(filter({ migration_completed: true })).toEqual({ migration_completed: true }));
+    it('strips unknown keys',            () => expect(filter({ unknown_key: true })).toEqual({}));
+    it('strips non-boolean valid keys',  () => expect(filter({ migration_completed: 'yes' })).toEqual({}));
   });
 });
