@@ -4,14 +4,7 @@
  * Steps: 0 Source → 1 Configure → 2 Pay → 3 Running → 4 Done
  *
  * Task 13: Added "Paste / Upload ZIP" as a 4th source option in Step 0.
- * The component handles:
- *  - Paste mode  : user pastes one file's code + sets a filename
- *  - ZIP mode    : user uploads a .zip; we extract it client-side with JSZip
- *                  and send { path, content }[] to /api/upload-source
- *  - GitHub PAT  : collected inline with a mini visual guide
- * On success the backend creates a private GitHub repo, pushes the files,
- * and returns the new repoUrl — we set it in the wizard store and advance
- * to Step 1 exactly as if the user had pasted a GitHub URL themselves.
+ * Task 19: Added AgentChat overlay + preScan health card in StepRunning.
  */
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
@@ -21,6 +14,7 @@ import { useWizardStore } from '../lib/store';
 import { useMigrationSocket } from '../hooks/useSocket';
 import Term from '../components/Term';
 import TokenWalkthrough from '../components/TokenWalkthrough';
+import AgentChat from '../components/AgentChat';  // Task 19
 
 const C = {
   amber: '#D97706', amberBg: '#FEF3C7', amberDark: '#B45309',
@@ -201,7 +195,6 @@ function StepSource({ onNext }) {
     setZipFiles([]);
     setZipName(file.name);
     try {
-      // Dynamically import JSZip so it doesn't bloat the initial bundle
       const JSZip = (await import('jszip')).default;
       const zip   = await JSZip.loadAsync(file);
       const extracted = [];
@@ -209,7 +202,6 @@ function StepSource({ onNext }) {
 
       zip.forEach((relativePath, zipEntry) => {
         if (zipEntry.dir) return;
-        // Skip hidden files, node_modules, .git, build artefacts
         if (
           relativePath.startsWith('__MACOSX') ||
           relativePath.includes('node_modules/') ||
@@ -221,7 +213,6 @@ function StepSource({ onNext }) {
 
         promises.push(
           zipEntry.async('string').then(content => {
-            // Strip leading folder name if the ZIP has a single root folder
             const cleanPath = relativePath.replace(/^[^/]+\//, '');
             if (cleanPath) extracted.push({ path: cleanPath, content });
           })
@@ -269,7 +260,6 @@ function StepSource({ onNext }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Upload failed.');
 
-      // Inject the new repo URL into wizard state — Step 1 onwards works normally
       setRepoUrl(data.repoUrl);
       setUploadDone(true);
       setUploadMsg(data.message);
@@ -300,7 +290,6 @@ function StepSource({ onNext }) {
         Just tell us where your app lives. We'll handle everything else.
       </p>
 
-      {/* Source selector buttons */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
         {SOURCES.map(s => (
           <button key={s.id} onClick={() => { setSource(s.id); setError(''); setUploadDone(false); }} style={{
@@ -319,12 +308,10 @@ function StepSource({ onNext }) {
         ))}
       </div>
 
-      {/* What is this? */}
       <InfoBox icon="💡" color={C.amber} bg={C.amberBg}>
         <strong>What is {selected?.name}?</strong> {selected?.what}
       </InfoBox>
 
-      {/* ── Standard GitHub / Replit / Emergent URL input ── */}
       {source !== 'paste' && (
         <div>
           <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
@@ -365,10 +352,8 @@ function StepSource({ onNext }) {
         </div>
       )}
 
-      {/* ── Paste / Upload ZIP panel ── */}
       {source === 'paste' && (
         <div>
-          {/* Success state */}
           {uploadDone ? (
             <div style={{ background: C.greenBg, border: `1px solid ${C.green}44`, borderRadius: 12, padding: '16px 18px', marginBottom: 16 }}>
               <div style={{ fontWeight: 700, fontSize: 14, color: C.green, marginBottom: 6 }}>✅ Repo created successfully!</div>
@@ -379,7 +364,6 @@ function StepSource({ onNext }) {
             </div>
           ) : (
             <div>
-              {/* App name */}
               <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
                 What's your app called?
               </label>
@@ -394,7 +378,6 @@ function StepSource({ onNext }) {
                 }}
               />
 
-              {/* Mode tabs */}
               <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
                 {[
                   { id: 'paste', icon: '📋', label: 'Paste code', sub: 'From Claude or anywhere' },
@@ -414,7 +397,6 @@ function StepSource({ onNext }) {
                 ))}
               </div>
 
-              {/* Paste mode */}
               {uploadMode === 'paste' && (
                 <div>
                   <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
@@ -452,7 +434,6 @@ function StepSource({ onNext }) {
                 </div>
               )}
 
-              {/* ZIP mode */}
               {uploadMode === 'zip' && (
                 <div
                   onClick={() => fileInputRef.current?.click()}
@@ -507,17 +488,14 @@ function StepSource({ onNext }) {
                 </div>
               )}
 
-              {/* GitHub PAT */}
               <GithubPatGuide value={githubPat} onChange={setGithubPat} />
 
-              {/* Error */}
               {error && (
                 <div style={{ background: C.redBg, border: `1px solid ${C.red}44`, borderRadius: 8, padding: '10px 13px', color: C.red, fontSize: 13, marginBottom: 14 }}>
                   {error}
                 </div>
               )}
 
-              {/* Upload CTA */}
               <button
                 type="button"
                 onClick={handleUploadAndContinue}
@@ -548,7 +526,6 @@ function StepSource({ onNext }) {
         </div>
       )}
 
-      {/* Branch (advanced, non-paste sources only) */}
       {source !== 'paste' && (
         <details style={{ marginBottom: 20 }}>
           <summary style={{ fontSize: 13, color: C.inkMid, cursor: 'pointer', userSelect: 'none' }}>
@@ -565,7 +542,6 @@ function StepSource({ onNext }) {
         </details>
       )}
 
-      {/* Non-paste error */}
       {error && source !== 'paste' && (
         <div style={{ background: C.redBg, border: `1px solid ${C.red}44`, borderRadius: 8, padding: '10px 14px', color: C.red, fontSize: 13, marginBottom: 16 }}>
           {error}
@@ -839,16 +815,74 @@ const TASK_LABELS = {
   vercel:   { label: '▲ Publishing to the internet',    desc: 'Making your app accessible to the world' },
   health:   { label: '✅ Final checks',                  desc: 'Making sure everything is working perfectly' },
 };
+
+// ─── Task 19: preScan health card ─────────────────────────────────────────────
+function PreScanCard({ report }) {
+  if (!report) return null;
+  const statusConfig = {
+    ready:        { icon: '✅', color: C.green,     bg: C.greenBg,  label: 'All good — ready to deploy!' },
+    warnings:     { icon: '⚠️', color: C.amber,     bg: C.amberBg,  label: 'A few things to know' },
+    'needs-input':{ icon: '💬', color: C.blue,      bg: C.blueBg,   label: 'We may need your help' },
+  };
+  const cfg = statusConfig[report.status] || statusConfig.ready;
+  return (
+    <div style={{
+      background: cfg.bg, border: `1px solid ${cfg.color}44`,
+      borderRadius: 12, padding: '14px 16px', marginBottom: 18,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 18 }}>{cfg.icon}</span>
+        <div style={{ fontWeight: 700, fontSize: 13, color: cfg.color }}>
+          AI Pre-flight Check — {cfg.label}
+        </div>
+      </div>
+      <div style={{ fontSize: 13, color: C.inkMid, lineHeight: 1.6, marginBottom: report.autoFixes?.length || report.needsFromUser?.length ? 10 : 0 }}>
+        {report.summary}
+      </div>
+      {report.autoFixes?.length > 0 && (
+        <div style={{ marginBottom: 6 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.green, marginBottom: 4 }}>✓ We'll handle automatically:</div>
+          {report.autoFixes.map((f, i) => (
+            <div key={i} style={{ fontSize: 12, color: C.inkMid, paddingLeft: 12, marginBottom: 2 }}>• {f}</div>
+          ))}
+        </div>
+      )}
+      {report.needsFromUser?.length > 0 && (
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.amber, marginBottom: 4 }}>💬 We may ask you about:</div>
+          {report.needsFromUser.map((f, i) => (
+            <div key={i} style={{ fontSize: 12, color: C.inkMid, paddingLeft: 12, marginBottom: 2 }}>• {f}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StepRunning({ migrationId }) {
-  useMigrationSocket(migrationId);
+  const socket = useMigrationSocket(migrationId);
   const completedTasks = useWizardStore(s => s.completedTasks) || [];
   const currentTask    = useWizardStore(s => s.currentTask)    || null;
+
+  // Task 19: capture preScan report from socket
+  const [preScanReport, setPreScanReport] = useState(null);
+  useEffect(() => {
+    if (!socket) return;
+    const handler = (report) => setPreScanReport(report);
+    socket.on('agent:prescan', handler);
+    return () => socket.off('agent:prescan', handler);
+  }, [socket]);
+
   const allTasks = Object.keys(TASK_LABELS);
   const progress = Math.round((completedTasks.length / allTasks.length) * 100);
   return (
     <div>
       <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 26, color: C.ink, marginBottom: 6 }}><Term id="deployment">Deploying</Term> your app… ⚡</h2>
       <p style={{ color: C.inkMid, fontSize: 14, marginBottom: 20, lineHeight: 1.6 }}>Please keep this tab open. This usually takes 2–5 minutes.</p>
+
+      {/* Task 19: preScan health card appears once the agent broadcasts it */}
+      <PreScanCard report={preScanReport} />
+
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}><span style={{ fontSize: 13, color: C.inkMid }}>Overall progress</span><span style={{ fontSize: 13, fontWeight: 700, color: C.amber }}>{progress}%</span></div>
         <div style={{ height: 8, background: C.border, borderRadius: 4, overflow: 'hidden' }}><div style={{ height: '100%', background: `linear-gradient(90deg, ${C.amber}, ${C.amberDark})`, width: `${progress}%`, borderRadius: 4, transition: 'width .5s ease' }} /></div>
@@ -872,6 +906,9 @@ function StepRunning({ migrationId }) {
         })}
       </div>
       <InfoBox icon="☕" color={C.amber} bg={C.amberBg}><strong>Good time for a coffee break!</strong> We're doing the equivalent of 2–5 days of developer work in the background.</InfoBox>
+
+      {/* Task 19: AgentChat overlay — mounts silently, opens only when agent:chat-needed fires */}
+      <AgentChat migrationId={migrationId} />
     </div>
   );
 }
