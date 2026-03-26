@@ -4,6 +4,7 @@
  * Task 16: Added CostEstimateCard
  * Task 18: Added "Share Receipt" button in the success banner
  * Gap 2:  Added "Resume Deployment" banner + button for paused/chat-needed migrations
+ * Gap 3:  Added DomainSetup component for completed migrations
  */
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
@@ -11,6 +12,7 @@ import Layout from '../../components/Layout';
 import StatusBadge from '../../components/StatusBadge';
 import WhatHappensNext from '../../components/WhatHappensNext';
 import CostEstimateCard from '../../components/CostEstimateCard';
+import DomainSetup from '../../components/DomainSetup';  // Gap 3
 import { useAuth } from '../../context/AuthContext';
 import { apiClient } from '../../lib/api';
 import useSocket from '../../hooks/useSocket';
@@ -45,8 +47,7 @@ export default function MigrationDetail() {
     socket.on('migration:log',      entry      => setLogs(l => [...l, entry]));
     socket.on('migration:complete', ()         => setMigration(m => m ? { ...m, status: 'complete' } : m));
     socket.on('migration:error',    ({ error }) => setMigration(m => m ? { ...m, status: 'failed', error_message: error } : m));
-    // Gap 2: live status update when agent needs input
-    socket.on('agent:chat-needed',  ()         => setMigration(m => m ? { ...m, status: 'chat-needed' } : m));
+    socket.on('agent:chat-needed',  ()         => setMigration(m => m ? { ...m, status: 'chat-needed' } : m)); // Gap 2
     return () => {
       socket.off('migration:log');
       socket.off('migration:complete');
@@ -71,7 +72,7 @@ export default function MigrationDetail() {
 
   const isComplete = migration.status === 'complete';
   const isFailed   = migration.status === 'failed';
-  const isPaused   = ['paused', 'chat-needed'].includes(migration.status);  // Gap 2
+  const isPaused   = ['paused', 'chat-needed'].includes(migration.status);
   const receiptUrl = `/receipt/${id}`;
 
   return (
@@ -127,10 +128,8 @@ export default function MigrationDetail() {
       {/* ── Gap 2: Paused / chat-needed banner ── */}
       {isPaused && (
         <div style={{
-          background: C.amberBg,
-          border: `2px solid ${C.amber}`,
-          borderRadius: 14, padding: '18px 22px',
-          marginBottom: '1.5rem',
+          background: C.amberBg, border: `2px solid ${C.amber}`,
+          borderRadius: 14, padding: '18px 22px', marginBottom: '1.5rem',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
@@ -140,7 +139,7 @@ export default function MigrationDetail() {
                 Deployment paused — the AI needs your help
               </div>
               <div style={{ fontSize: 13, color: C.inkMid, lineHeight: 1.6 }}>
-                Your deployment stopped mid-way because the AI agent hit something it couldn't
+                Your deployment stopped mid-way because the AI agent hit something it couldn’t
                 decide on its own. Answer one quick question and it will pick up right where it left off.
               </div>
             </div>
@@ -148,17 +147,10 @@ export default function MigrationDetail() {
           <button
             onClick={() => router.push(`/migrations/resume?id=${id}`)}
             style={{
-              flexShrink: 0,
-              padding: '12px 22px',
-              background: C.amber,
-              color: '#fff',
-              border: 'none',
-              borderRadius: 10,
-              fontWeight: 700,
-              fontSize: 14,
-              cursor: 'pointer',
-              boxShadow: '0 4px 14px rgba(217,119,6,.3)',
-              whiteSpace: 'nowrap',
+              flexShrink: 0, padding: '12px 22px', background: C.amber,
+              color: '#fff', border: 'none', borderRadius: 10,
+              fontWeight: 700, fontSize: 14, cursor: 'pointer',
+              boxShadow: '0 4px 14px rgba(217,119,6,.3)', whiteSpace: 'nowrap',
             }}
           >
             💬 Resume deployment →
@@ -177,8 +169,7 @@ export default function MigrationDetail() {
             </div>
           </div>
           <a
-            href={receiptUrl}
-            target="_blank" rel="noreferrer"
+            href={receiptUrl} target="_blank" rel="noreferrer"
             style={{ flexShrink: 0, padding: '9px 16px', borderRadius: 8, background: C.green, color: '#fff', fontWeight: 700, fontSize: 13, textDecoration: 'none', whiteSpace: 'nowrap' }}
           >
             📄 Share receipt
@@ -221,6 +212,9 @@ export default function MigrationDetail() {
         </div>
       )}
 
+      {/* ── Gap 3: Domain setup wizard ── */}
+      {isComplete && <DomainSetup migrationId={id} />}
+
       {/* ── Analysis ── */}
       {migration.analysis_result && (
         <div style={{ background: '#fff', borderRadius: 12, border: `1px solid ${C.border}`, padding: '1.5rem', marginBottom: '1.5rem' }}>
@@ -250,7 +244,7 @@ export default function MigrationDetail() {
         </div>
       )}
 
-      {/* ── Cost estimate card (Task 16) ── */}
+      {/* ── Cost estimate card ── */}
       {isComplete && <CostEstimateCard migration={migration} />}
 
       {/* ── What Happens Next ── */}
