@@ -3,8 +3,9 @@
  * Individual migration detail + real-time log + What Happens Next guide
  * Task 16: Added CostEstimateCard
  * Task 18: Added "Share Receipt" button in the success banner
- * Gap 2:  Added "Resume Deployment" banner + button for paused/chat-needed migrations
+ * Gap 2:  Added "Resume Deployment" banner for paused/chat-needed migrations
  * Gap 3:  Added DomainSetup component for completed migrations
+ * Gap 4:  Added CredentialRetry component for failed migrations
  */
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
@@ -12,7 +13,8 @@ import Layout from '../../components/Layout';
 import StatusBadge from '../../components/StatusBadge';
 import WhatHappensNext from '../../components/WhatHappensNext';
 import CostEstimateCard from '../../components/CostEstimateCard';
-import DomainSetup from '../../components/DomainSetup';  // Gap 3
+import DomainSetup from '../../components/DomainSetup';
+import CredentialRetry from '../../components/CredentialRetry';  // Gap 4
 import { useAuth } from '../../context/AuthContext';
 import { apiClient } from '../../lib/api';
 import useSocket from '../../hooks/useSocket';
@@ -47,12 +49,15 @@ export default function MigrationDetail() {
     socket.on('migration:log',      entry      => setLogs(l => [...l, entry]));
     socket.on('migration:complete', ()         => setMigration(m => m ? { ...m, status: 'complete' } : m));
     socket.on('migration:error',    ({ error }) => setMigration(m => m ? { ...m, status: 'failed', error_message: error } : m));
-    socket.on('agent:chat-needed',  ()         => setMigration(m => m ? { ...m, status: 'chat-needed' } : m)); // Gap 2
+    socket.on('agent:chat-needed',  ()         => setMigration(m => m ? { ...m, status: 'chat-needed' } : m));
+    // Gap 4: live update when retry kicks off
+    socket.on('migration:retrying', ()         => setMigration(m => m ? { ...m, status: 'deploying', error_message: null } : m));
     return () => {
       socket.off('migration:log');
       socket.off('migration:complete');
       socket.off('migration:error');
       socket.off('agent:chat-needed');
+      socket.off('migration:retrying');
     };
   }, [socket, id]);
 
@@ -62,6 +67,11 @@ export default function MigrationDetail() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
     });
+  };
+
+  // Gap 4: when retry starts, redirect to the migrate wizard progress screen
+  const handleRetryStarted = () => {
+    router.push(`/migrate?retry=${id}`);
   };
 
   if (!migration) return (
@@ -125,6 +135,15 @@ export default function MigrationDetail() {
         </div>
       </div>
 
+      {/* ── Gap 4: Credential fix + retry (failed migrations) ── */}
+      {isFailed && (
+        <CredentialRetry
+          migrationId={id}
+          errorMessage={migration.error_message}
+          onRetryStarted={handleRetryStarted}
+        />
+      )}
+
       {/* ── Gap 2: Paused / chat-needed banner ── */}
       {isPaused && (
         <div style={{
@@ -158,26 +177,7 @@ export default function MigrationDetail() {
         </div>
       )}
 
-      {/* ── Success banner ── */}
-      {isComplete && (
-        <div style={{ background: C.greenBg, border: `1px solid ${C.green}44`, borderRadius: 12, padding: '16px 20px', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <span style={{ fontSize: 28 }}>🎉</span>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: 16, color: C.green }}>Your app is live!</div>
-              <div style={{ fontSize: 13, color: '#166534', marginTop: 2 }}>Migration completed successfully. Your app is now accessible to anyone in the world.</div>
-            </div>
-          </div>
-          <a
-            href={receiptUrl} target="_blank" rel="noreferrer"
-            style={{ flexShrink: 0, padding: '9px 16px', borderRadius: 8, background: C.green, color: '#fff', fontWeight: 700, fontSize: 13, textDecoration: 'none', whiteSpace: 'nowrap' }}
-          >
-            📄 Share receipt
-          </a>
-        </div>
-      )}
-
-      {/* ── Failure banner ── */}
+      {/* ── Failure banner (shown after CredentialRetry so it’s below the fix panel) ── */}
       {isFailed && (
         <div style={{ background: '#FFF1F2', border: `1px solid ${C.red}44`, borderRadius: 12, padding: '16px 20px', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: 14 }}>
           <span style={{ fontSize: 28 }}>⚠️</span>
@@ -187,6 +187,24 @@ export default function MigrationDetail() {
               {migration.error_message || 'Something went wrong. A full refund will be issued within 24 hours.'}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Success banner ── */}
+      {isComplete && (
+        <div style={{ background: C.greenBg, border: `1px solid ${C.green}44`, borderRadius: 12, padding: '16px 20px', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <span style={{ fontSize: 28 }}>🎉</span>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 16, color: C.green }}>Your app is live!</div>
+              <div style={{ fontSize: 13, color: '#166534', marginTop: 2 }}>Migration completed successfully.</div>
+            </div>
+          </div>
+          <a href={receiptUrl} target="_blank" rel="noreferrer"
+            style={{ flexShrink: 0, padding: '9px 16px', borderRadius: 8, background: C.green, color: '#fff', fontWeight: 700, fontSize: 13, textDecoration: 'none', whiteSpace: 'nowrap' }}
+          >
+            📄 Share receipt
+          </a>
         </div>
       )}
 
@@ -244,10 +262,8 @@ export default function MigrationDetail() {
         </div>
       )}
 
-      {/* ── Cost estimate card ── */}
       {isComplete && <CostEstimateCard migration={migration} />}
 
-      {/* ── What Happens Next ── */}
       {isComplete && (
         <div style={{ background: '#fff', borderRadius: 16, border: `1px solid ${C.border}`, padding: '24px 28px', marginTop: '1.5rem', boxShadow: '0 2px 16px rgba(0,0,0,.05)' }}>
           <WhatHappensNext deployedUrls={migration.deployed_urls} sourcePlatform={migration.source_platform} />
