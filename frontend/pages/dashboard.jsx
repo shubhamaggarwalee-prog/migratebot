@@ -5,8 +5,9 @@
  * G1:       Added OnboardingTour for first-time users.
  *           Added tour anchor IDs: tour-new-migration, tour-stats,
  *           tour-migrations-list, tour-settings (on the Layout nav link).
+ * Gap 5:    Added search, status filter, and sort to the migrations list.
  */
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { useAuth } from '../context/AuthContext';
@@ -16,7 +17,7 @@ import Layout from '../components/Layout';
 import Term from '../components/Term';
 import PushChange from '../components/PushChange';
 import HealthWidget from '../components/HealthWidget';
-import OnboardingTour from '../components/OnboardingTour';  // G1
+import OnboardingTour from '../components/OnboardingTour';
 
 const C = {
   amber: '#D97706', amberBg: '#FEF3C7', amberDark: '#B45309',
@@ -25,6 +26,23 @@ const C = {
   greenBg: '#D1FAE5', red: '#DC2626', redBg: '#FEE2E2',
   blue: '#2563EB', blueBg: '#DBEAFE',
 };
+
+const STATUS_FILTERS = [
+  { value: 'all',        label: 'All' },
+  { value: 'complete',   label: '✓ Complete' },
+  { value: 'deploying',  label: '⚡ Deploying' },
+  { value: 'analyzing',  label: '🔍 Analyzing' },
+  { value: 'failed',     label: '✗ Failed' },
+  { value: 'chat-needed',label: '⏸ Paused' },
+];
+
+const SORT_OPTIONS = [
+  { value: 'newest',   label: 'Newest first' },
+  { value: 'oldest',   label: 'Oldest first' },
+  { value: 'name-asc', label: 'Name A → Z' },
+  { value: 'name-desc',label: 'Name Z → A' },
+  { value: 'status',   label: 'Status' },
+];
 
 // ─── Claude Chat Widget ────────────────────────────────────────────────────
 function ClaudeChat({ migration }) {
@@ -197,6 +215,218 @@ function YourAppSection({ migration }) {
   );
 }
 
+// ─── Gap 5: MigrationsList — search + filter + sort ───────────────────────────
+function MigrationsList({ migrations, onRowClick, onRefresh }) {
+  const [query,        setQuery]        = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [sortBy,       setSortBy]       = useState('newest');
+
+  const STATUS_ORDER = { complete: 0, deploying: 1, analyzing: 2, 'chat-needed': 3, paused: 3, failed: 4 };
+
+  const filtered = useMemo(() => {
+    let list = [...migrations];
+
+    // Search: repo name, URL, or platform
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      list = list.filter(m =>
+        (m.reponame  || '').toLowerCase().includes(q) ||
+        (m.repourl   || '').toLowerCase().includes(q) ||
+        (m.source_platform || '').toLowerCase().includes(q)
+      );
+    }
+
+    // Status filter
+    if (statusFilter !== 'all') {
+      list = list.filter(m =>
+        statusFilter === 'chat-needed'
+          ? ['chat-needed', 'paused'].includes(m.status)
+          : m.status === statusFilter
+      );
+    }
+
+    // Sort
+    list.sort((a, b) => {
+      switch (sortBy) {
+        case 'oldest':    return new Date(a.created_at) - new Date(b.created_at);
+        case 'name-asc':  return (a.reponame || a.repourl || '').localeCompare(b.reponame || b.repourl || '');
+        case 'name-desc': return (b.reponame || b.repourl || '').localeCompare(a.reponame || a.repourl || '');
+        case 'status':    return (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9);
+        default:          return new Date(b.created_at) - new Date(a.created_at); // newest
+      }
+    });
+
+    return list;
+  }, [migrations, query, statusFilter, sortBy]);
+
+  const clearAll = () => { setQuery(''); setStatusFilter('all'); setSortBy('newest'); };
+  const hasActiveFilters = query.trim() || statusFilter !== 'all' || sortBy !== 'newest';
+
+  return (
+    <div
+      id="tour-migrations-list"
+      style={{ background: '#fff', borderRadius: 12, border: `1px solid ${C.border}` }}
+    >
+      {/* ── List header ── */}
+      <div style={{
+        padding: '14px 16px',
+        borderBottom: `1px solid ${C.border}`,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap',
+      }}>
+        <span style={{ fontWeight: 600, color: C.ink, flexShrink: 0 }}>
+          <Term id="migration">Migrations</Term>
+          {filtered.length !== migrations.length && (
+            <span style={{ marginLeft: 8, fontSize: 12, color: C.inkLight, fontWeight: 400 }}>
+              {filtered.length} of {migrations.length}
+            </span>
+          )}
+        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {hasActiveFilters && (
+            <button
+              onClick={clearAll}
+              style={{ fontSize: 12, color: C.red, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+            >
+              Clear filters
+            </button>
+          )}
+          <button
+            onClick={onRefresh}
+            style={{ background: 'none', border: 'none', color: C.amber, cursor: 'pointer', fontSize: 13 }}
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* ── Search + Filter + Sort bar ── */}
+      <div style={{
+        padding: '12px 16px',
+        borderBottom: `1px solid ${C.border}`,
+        display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center',
+        background: C.surface,
+      }}>
+        {/* Search input */}
+        <div style={{ position: 'relative', flex: '1 1 180px', minWidth: 140 }}>
+          <span style={{
+            position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)',
+            fontSize: 13, color: C.inkLight, pointerEvents: 'none',
+          }}>🔍</span>
+          <input
+            type="text"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search by name or platform…"
+            style={{
+              width: '100%', paddingLeft: 30, paddingRight: query ? 28 : 10,
+              paddingTop: 8, paddingBottom: 8,
+              border: `1.5px solid ${query ? C.amber : C.border}`,
+              borderRadius: 8, fontSize: 13, outline: 'none',
+              background: '#fff', boxSizing: 'border-box', fontFamily: 'inherit',
+            }}
+          />
+          {query && (
+            <button
+              onClick={() => setQuery('')}
+              style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: C.inkLight, fontSize: 14, lineHeight: 1 }}
+            >×</button>
+          )}
+        </div>
+
+        {/* Status filter pills */}
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+          {STATUS_FILTERS.map(f => (
+            <button
+              key={f.value}
+              onClick={() => setStatusFilter(f.value)}
+              style={{
+                padding: '5px 11px', borderRadius: 20, fontSize: 12, fontWeight: 600,
+                border: `1.5px solid ${statusFilter === f.value ? C.amber : C.border}`,
+                background: statusFilter === f.value ? C.amberBg : '#fff',
+                color: statusFilter === f.value ? C.amberDark : C.inkMid,
+                cursor: 'pointer', whiteSpace: 'nowrap',
+              }}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Sort dropdown */}
+        <select
+          value={sortBy}
+          onChange={e => setSortBy(e.target.value)}
+          style={{
+            padding: '7px 10px', border: `1.5px solid ${sortBy !== 'newest' ? C.amber : C.border}`,
+            borderRadius: 8, fontSize: 12, color: C.inkMid,
+            background: '#fff', cursor: 'pointer', outline: 'none',
+            fontFamily: 'inherit',
+          }}
+        >
+          {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </div>
+
+      {/* ── Rows ── */}
+      {migrations.length === 0 ? (
+        <div style={{ padding: '3rem', textAlign: 'center', color: C.inkMid }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>🚀</div>
+          <p>No <Term id="migration">migrations</Term> yet. <Link href="/migrate" style={{ color: C.amber }}>Start your first one!</Link></p>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div style={{ padding: '2.5rem', textAlign: 'center', color: C.inkMid }}>
+          <div style={{ fontSize: 36, marginBottom: 10 }}>🔍</div>
+          <p style={{ fontSize: 14, marginBottom: 8 }}>No migrations match your search or filters.</p>
+          <button onClick={clearAll} style={{ background: 'none', border: 'none', color: C.amber, cursor: 'pointer', fontSize: 13, textDecoration: 'underline' }}>Clear filters</button>
+        </div>
+      ) : (
+        filtered.map((m, idx) => (
+          <div
+            key={m.id}
+            onClick={() => onRowClick(m.id)}
+            style={{
+              padding: '1rem 1.5rem',
+              borderBottom: idx < filtered.length - 1 ? `1px solid #F0EDE6` : 'none',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              cursor: 'pointer',
+              transition: 'background .12s',
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = C.surface}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+          >
+            <div>
+              <div style={{ fontWeight: 600, color: C.ink, fontSize: 14 }}>
+                {/* Highlight matched query in name */}
+                {query.trim() ? highlightMatch(m.reponame || m.repourl || '', query) : (m.reponame || m.repourl)}
+              </div>
+              <div style={{ fontSize: 12, color: C.inkLight, marginTop: 2 }}>
+                {m.source_platform} • {new Date(m.created_at).toLocaleDateString()}
+                {m.branch && <span> • {m.branch}</span>}
+              </div>
+            </div>
+            <StatusBadge status={m.status} />
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+// Highlight search query match inside a string
+function highlightMatch(text, query) {
+  const idx = text.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) return text;
+  return (
+    <span>
+      {text.slice(0, idx)}
+      <mark style={{ background: C.amberBg, color: C.amberDark, borderRadius: 3, padding: '0 2px' }}>
+        {text.slice(idx, idx + query.length)}
+      </mark>
+      {text.slice(idx + query.length)}
+    </span>
+  );
+}
+
 // ─── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const router = useRouter();
@@ -221,7 +451,6 @@ export default function Dashboard() {
           <h1 style={{ fontFamily: 'Georgia, serif', fontSize: 28, color: C.ink, margin: 0 }}>Dashboard</h1>
           <p style={{ color: C.inkMid, marginTop: 4 }}>Welcome back, {user?.name || user?.email}</p>
         </div>
-        {/* G1: tour anchor on the New Migration button */}
         <Link
           id="tour-new-migration"
           href="/migrate"
@@ -235,7 +464,7 @@ export default function Dashboard() {
       {latestSuccess && <PushChange migration={latestSuccess} onSuccess={refresh} />}
       {latestSuccess && <ClaudeChat migration={latestSuccess} />}
 
-      {/* G1: tour anchor on stats row */}
+      {/* Stats row */}
       <div
         id="tour-stats"
         style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: '2rem' }}
@@ -253,32 +482,12 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* G1: tour anchor on migrations list */}
-      <div
-        id="tour-migrations-list"
-        style={{ background: '#fff', borderRadius: 12, border: `1px solid ${C.border}` }}
-      >
-        <div style={{ padding: '1rem 1.5rem', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontWeight: 600, color: C.ink }}><Term id="migration">Migrations</Term></span>
-          <button onClick={refresh} style={{ background: 'none', border: 'none', color: C.amber, cursor: 'pointer', fontSize: 13 }}>Refresh</button>
-        </div>
-        {migrations.length === 0 ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: C.inkMid }}>
-            <div style={{ fontSize: 48, marginBottom: 12 }}>🚀</div>
-            <p>No <Term id="migration">migrations</Term> yet. <Link href="/migrate" style={{ color: C.amber }}>Start your first one!</Link></p>
-          </div>
-        ) : (
-          migrations.map(m => (
-            <div key={m.id} onClick={() => router.push(`/migrations/${m.id}`)} style={{ padding: '1rem 1.5rem', borderBottom: `1px solid #F0EDE6`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
-              <div>
-                <div style={{ fontWeight: 600, color: C.ink, fontSize: 14 }}>{m.reponame || m.repourl}</div>
-                <div style={{ fontSize: 12, color: C.inkLight, marginTop: 2 }}>{m.source_platform} • {new Date(m.created_at).toLocaleDateString()}</div>
-              </div>
-              <StatusBadge status={m.status} />
-            </div>
-          ))
-        )}
-      </div>
+      {/* Gap 5: searchable + filterable + sortable migrations list */}
+      <MigrationsList
+        migrations={migrations}
+        onRowClick={id => router.push(`/migrations/${id}`)}
+        onRefresh={refresh}
+      />
     </Layout>
   );
 }
