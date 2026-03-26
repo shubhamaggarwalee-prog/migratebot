@@ -22,6 +22,7 @@ app.use('/api/migrations',    require('./routes/migrations'));
 app.use('/api/credentials',   require('./routes/credentials'));
 app.use('/api/billing',       require('./routes/billing'));
 app.use('/api/chat',          require('./routes/chat'));
+app.use('/api/agent',         require('./routes/agentChat'));        // Task 19
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/health',        require('./routes/health'));
 app.use('/api/webhooks',      require('./routes/webhooks'));
