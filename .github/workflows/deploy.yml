@@ -1,19 +1,10 @@
 # .github/workflows/deploy.yml
-# Continuous Deployment
-#
-# Triggers ONLY on push to main (after a PR merges).
-# Deployment targets:
-#   frontend  — Vercel (via Vercel CLI)
-#   backend   — Railway (via Railway CLI)
+# Continuous Deployment — triggers on push to main
 #
 # Required GitHub Secrets:
 #   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
 #   RAILWAY_TOKEN, RAILWAY_SERVICE_ID
 #   SLACK_DEPLOY_WEBHOOK  (optional)
-#
-# NOTE: No "environment: production" gate is used here intentionally.
-# If you want manual approval before deploys, create a "production"
-# environment in Settings > Environments and add it back.
 
 name: Deploy
 
@@ -26,38 +17,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ───────────────────────────────────────────────────────
-  # Job 1: Deploy frontend to Vercel
-  # ───────────────────────────────────────────────────────
   deploy-frontend:
     name: Deploy Frontend to Vercel
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node 20
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Install Vercel CLI
-        run: npm install --global vercel@latest
-
+      - run: npm install --global vercel@latest
       - name: Pull Vercel environment
         run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-
-      - name: Build for Vercel
+      - name: Build
         run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-
-      - name: Deploy to Vercel production
+      - name: Deploy
         id: vercel-deploy
         run: |
           url=$(vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})
@@ -66,64 +45,35 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
-      - name: Comment deployment URL on commit
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const sha = context.sha.slice(0, 7);
-            const url = '${{ steps.vercel-deploy.outputs.deployment_url }}';
-            await github.rest.repos.createCommitComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              commit_sha: context.sha,
-              body: `Frontend deployed to production\n\nURL: ${url}\nCommit: ${sha}`,
-            });
-
-  # ───────────────────────────────────────────────────────
-  # Job 2: Deploy backend to Railway
-  # ───────────────────────────────────────────────────────
   deploy-backend:
     name: Deploy Backend to Railway
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Railway CLI
-        run: npm install --global @railway/cli
-
-      - name: Deploy to Railway
+      - uses: actions/checkout@v4
+      - run: npm install --global @railway/cli
+      - name: Deploy
         run: railway up --service ${{ secrets.RAILWAY_SERVICE_ID }} --detach
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
 
-  # ───────────────────────────────────────────────────────
-  # Job 3: Slack notification after both deploys
-  # ───────────────────────────────────────────────────────
   notify:
-    name: Slack Deploy Notification
+    name: Slack Notification
     runs-on: ubuntu-latest
     needs: [deploy-frontend, deploy-backend]
     if: always()
-
     steps:
+      # secrets cannot be used in job-level if:, so guard at step level
       - name: Notify Slack
-        if: ${{ secrets.SLACK_DEPLOY_WEBHOOK != '' }}
+        # Only run if the secret is actually set (non-empty)
+        env:
+          WEBHOOK: ${{ secrets.SLACK_DEPLOY_WEBHOOK }}
+        if: env.WEBHOOK != ''
         uses: slackapi/slack-github-action@v1.26.0
         with:
           payload: |
             {
               "text": "MigrateBot deploy — frontend: ${{ needs.deploy-frontend.result }}, backend: ${{ needs.deploy-backend.result }}",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*MigrateBot production deploy*\n>Frontend: `${{ needs.deploy-frontend.result }}`\n>Backend: `${{ needs.deploy-backend.result }}`\n>Commit: `${{ github.sha }}`\n>Author: ${{ github.event.head_commit.author.name }}"
-                  }
-                }
-              ]
+              "blocks": [{"type":"section","text":{"type":"mrkdwn","text":"*MigrateBot production deploy*\n>Frontend: `${{ needs.deploy-frontend.result }}`\n>Backend: `${{ needs.deploy-backend.result }}`\n>Commit: `${{ github.sha }}`"}}]
             }
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOY_WEBHOOK }}

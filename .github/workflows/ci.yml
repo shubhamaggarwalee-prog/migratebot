@@ -1,11 +1,4 @@
 # .github/workflows/ci.yml
-# Continuous Integration
-#
-# Runs on every push to any branch and on every pull request targeting main.
-# Jobs:
-#   lint-and-build  — Next.js ESLint + production build
-#   test-backend    — Jest suite for all backend routes
-
 name: CI
 
 on:
@@ -19,80 +12,63 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ───────────────────────────────────────────────────────
-  # Job 1: Frontend — lint + build
-  # ───────────────────────────────────────────────────────
   lint-and-build:
     name: Frontend — Lint & Build
     runs-on: ubuntu-latest
-
     defaults:
       run:
         working-directory: frontend
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node 20
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Lint (Next.js ESLint)
-        run: npm run lint
-
-      - name: Build (Next.js production)
+      - run: npm install
+      - run: npm run lint
+      - name: Build
         env:
-          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL || 'http://localhost:4000' }}
-          NEXT_PUBLIC_STRIPE_KEY: ${{ secrets.NEXT_PUBLIC_STRIPE_KEY || 'pk_test_stub' }}
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || 'https://stub.supabase.co' }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'stub-anon-key' }}
+          NEXT_PUBLIC_API_URL: http://localhost:4000
+          NEXT_PUBLIC_STRIPE_KEY: pk_test_stub
+          NEXT_PUBLIC_SUPABASE_URL: https://stub.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: stub-anon-key
         run: npm run build
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: nextjs-build
           path: frontend/.next
           retention-days: 3
 
-  # ───────────────────────────────────────────────────────
-  # Job 2: Backend — Jest test suite
-  # ───────────────────────────────────────────────────────
   test-backend:
     name: Backend — Jest Tests
     runs-on: ubuntu-latest
-
     defaults:
       run:
         working-directory: backend
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node 20
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Run Jest (with coverage)
+      - run: npm install
+      - name: Run Jest
         env:
           NODE_ENV: test
           JWT_SECRET: test-secret-for-ci
           ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+          # Supabase — supabase.js throws at require-time if either is missing
           SUPABASE_URL: https://stub.supabase.co
-          SUPABASE_SERVICE_KEY: stub-service-key
+          SUPABASE_SERVICE_ROLE_KEY: stub-service-role-key
+          # Stripe — billing.js calls Stripe(key) at module load
+          STRIPE_SECRET_KEY: sk_test_stub000000000000000000000000000
+          STRIPE_WEBHOOK_SECRET: whsec_stub
+          # Redis / Bull — queue.js references REDIS_URL
+          REDIS_URL: redis://localhost:6379
+          # Misc
+          FRONTEND_URL: http://localhost:3000
+          ANTHROPIC_API_KEY: sk-ant-stub
+          SENDGRID_API_KEY: SG.stub
         run: npm test -- --coverage --forceExit --passWithNoTests
-
-      - name: Upload coverage report
+      - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
