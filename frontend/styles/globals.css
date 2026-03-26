@@ -1,7 +1,9 @@
 /* MigrateBot Global Styles
  * Light cream theme with amber accents
+ * Gap 7: Added mobile-first responsive system + utility classes
  */
 
+/* ─── Reset ─────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html { scroll-behavior: smooth; }
@@ -16,23 +18,322 @@ body {
 
 a { color: inherit; }
 
-button, input, select, textarea {
-  font-family: inherit;
-}
+button, input, select, textarea { font-family: inherit; }
 
 input:focus, textarea:focus, select:focus {
   outline: 2px solid #D97706;
   outline-offset: 1px;
 }
 
-/* Scrollbar */
+/* ─── Scrollbar ──────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: #F8F7F4; }
 ::-webkit-scrollbar-thumb { background: #D5D2CA; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #B8B4AA; }
 
-/* Selection */
+/* ─── Selection ──────────────────────────────────────────────────────────── */
 ::selection { background: #FEF3C7; color: #92400E; }
 
-/* Utility classes */
-.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+/* ─── Accessibility ─────────────────────────────────────────────────────── */
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0,0,0,0); border: 0;
+}
+
+/* ─── CSS custom properties (design tokens) ────────────────────────────── */
+:root {
+  --amber:      #D97706;
+  --amber-bg:   #FEF3C7;
+  --amber-dark: #B45309;
+  --ink:        #1A1814;
+  --ink-mid:    #5C574E;
+  --ink-light:  #9B958A;
+  --border:     #E5E2DA;
+  --surface:    #F8F7F4;
+  --green:      #059669;
+  --green-bg:   #D1FAE5;
+  --red:        #DC2626;
+  --red-bg:     #FEE2E2;
+  --blue:       #2563EB;
+  --blue-bg:    #DBEAFE;
+
+  /* Layout */
+  --sidebar-w:     220px;
+  --page-px:       2rem;     /* horizontal padding inside <main> */
+  --page-px-sm:    1rem;
+  --content-max:   900px;
+}
+
+/* ─── Layout shell ───────────────────────────────────────────────────────── */
+/*
+  .mb-layout        = outer flex wrapper (sidebar + main)
+  .mb-sidebar       = left nav panel
+  .mb-main          = scrollable content area
+  .mb-hamburger     = mobile menu button (hidden on desktop)
+  .mb-overlay       = click-away backdrop on mobile
+*/
+
+.mb-layout {
+  display: flex;
+  min-height: 100vh;
+  background: var(--surface);
+  position: relative;
+}
+
+.mb-sidebar {
+  width: var(--sidebar-w);
+  background: #fff;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  flex-shrink: 0;
+  transition: transform 0.25s ease;
+  z-index: 200;
+}
+
+.mb-main {
+  flex: 1;
+  padding: var(--page-px);
+  min-width: 0;          /* prevent flex blowout */
+  overflow-x: hidden;
+}
+
+/* Hamburger — hidden on desktop */
+.mb-hamburger {
+  display: none;
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 300;
+  width: 40px;
+  height: 40px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.08);
+  transition: background .15s;
+}
+.mb-hamburger:hover { background: var(--amber-bg); }
+
+/* Click-away overlay */
+.mb-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(26,24,20,.35);
+  z-index: 190;
+  backdrop-filter: blur(1px);
+}
+
+/* ─── Responsive grid utilities ─────────────────────────────────────────── */
+/*  Use these on dashboard stat rows, wizard steps, URL cards, etc.         */
+
+.mb-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.mb-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.mb-grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+
+/* ─── Responsive table helpers ──────────────────────────────────────────── */
+.mb-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* ─── Form + input helpers ──────────────────────────────────────────────── */
+.mb-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  background: #fff;
+  transition: border-color .15s;
+}
+.mb-input:focus { border-color: var(--amber); }
+
+/* ─── Card ────────────────────────────────────────────────────────────────- */
+.mb-card {
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  padding: 1.25rem;
+}
+
+/* ─── Button base ───────────────────────────────────────────────────────── */
+.mb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: opacity .15s;
+  white-space: nowrap;
+}
+.mb-btn:disabled { opacity: .45; cursor: default; }
+.mb-btn-primary  { background: var(--amber);  color: #fff; }
+.mb-btn-danger   { background: var(--red);    color: #fff; }
+.mb-btn-ghost    { background: transparent;   color: var(--ink-mid); border: 1px solid var(--border); }
+
+/* ─── Status badge ───────────────────────────────────────────────────────── */
+.mb-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ─── Page header row ───────────────────────────────────────────────────── */
+.mb-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+/* ─── Migration log / terminal box ─────────────────────────────────────── */
+.mb-log-box {
+  background: #1A1814;
+  color: #A8E6CF;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-x: auto;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+/* ─── BREAKPOINTS ────────────────────────────────────────────────────────
+   Breakpoint scale (mobile-first):
+     sm  ≤ 640px   (phones)
+     md  ≤ 768px   (large phones / small tablets)
+     lg  ≤ 1024px  (tablets / small laptops)
+──────────────────────────────────────────────────────────────────────── */
+
+/* ── lg: tablets / small laptops (≤ 1024px) ──────────────────────────── */
+@media (max-width: 1024px) {
+  :root {
+    --sidebar-w: 200px;
+    --page-px:   1.5rem;
+  }
+
+  .mb-grid-4 { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ── md: large phones / small tablets (≤ 768px) ─────────────────────── */
+@media (max-width: 768px) {
+  :root {
+    --page-px: var(--page-px-sm);
+  }
+
+  /* Show hamburger button */
+  .mb-hamburger { display: flex; }
+
+  /* Sidebar slides off-screen by default */
+  .mb-sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    height: 100vh;
+    transform: translateX(-100%);
+    box-shadow: 4px 0 24px rgba(0,0,0,.12);
+  }
+
+  /* When open (JS adds .is-open) */
+  .mb-sidebar.is-open   { transform: translateX(0); }
+  .mb-overlay.is-open   { display: block; }
+
+  /* Main gets top padding to clear hamburger button */
+  .mb-main {
+    padding-top: 70px;
+    max-width: 100%;
+  }
+
+  /* Grids collapse */
+  .mb-grid-4 { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .mb-grid-3 { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+
+  /* Page header: title on top, action below */
+  .mb-page-header { flex-direction: column; align-items: flex-start; }
+
+  /* Wizard steps: stack vertically */
+  .mb-steps { flex-direction: column !important; }
+}
+
+/* ── sm: phones (≤ 640px) ────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  /* Single column for everything */
+  .mb-grid-4,
+  .mb-grid-3,
+  .mb-grid-2 { grid-template-columns: 1fr !important; gap: 8px; }
+
+  /* Full-width buttons */
+  .mb-btn-full-mobile { width: 100%; justify-content: center; }
+
+  /* Tighten cards */
+  .mb-card { padding: 1rem; }
+
+  /* Tighten log box */
+  .mb-log-box { font-size: 12px; max-height: 280px; }
+
+  /* Migration list rows: stack label + badge */
+  .mb-migration-row {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 6px !important;
+  }
+
+  /* Settings tab bar: scrollable horizontally */
+  .mb-tab-bar {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+    scrollbar-width: none;
+  }
+  .mb-tab-bar::-webkit-scrollbar { display: none; }
+
+  /* Notification preference rows: stack toggles below text */
+  .mb-notif-row {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+  }
+  .mb-notif-row .mb-notif-toggles {
+    display: flex;
+    flex-direction: row;
+    gap: 20px;
+  }
+
+  /* Status filter pills wrap gracefully */
+  .mb-filter-pills { flex-wrap: wrap; gap: 6px !important; }
+
+  /* Credential card input row: stack inputs */
+  .mb-cred-row {
+    flex-direction: column !important;
+    gap: 8px !important;
+  }
+  .mb-cred-row button { width: 100%; }
+}
+
+/* ─── Print ──────────────────────────────────────────────────────────────── */
+@media print {
+  .mb-sidebar,
+  .mb-hamburger { display: none !important; }
+  .mb-main { padding: 0; max-width: 100%; }
+}
