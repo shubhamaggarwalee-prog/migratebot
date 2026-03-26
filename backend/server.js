@@ -22,33 +22,17 @@ require('dotenv').config();
 const logger = require('./utils/logger');
 
 // ─── Rate-limit factories ─────────────────────────────────────────────────────
-// We keep the in-memory implementation for now (no extra dep) but expose
-// named limiters with appropriate windows + ceilings per route group.
 const rateLimit = require('./middleware/rateLimit');
 
-/**
- * Auth limiter  — 10 attempts per 15 min per IP.
- * Protects login, register, password-reset, and 2FA verify against brute force.
- */
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10 });
-
-/**
- * Billing limiter — 20 requests per 10 min per IP.
- * Prevents Stripe payment-intent spam.
- */
+const authLimiter    = rateLimit({ windowMs: 15 * 60 * 1000, max: 10 });
 const billingLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 20 });
-
-/**
- * General API limiter — 300 requests per 1 min per IP.
- * A generous ceiling that still stops runaway scripts.
- */
 const generalLimiter = rateLimit({ windowMs: 60 * 1000, max: 300 });
 
-// ─── App + HTTP server ────────────────────────────────────────────────────────
+// ─── App + HTTP server ───────────────────────────────────────────────────────
 const app    = express();
 const server = http.createServer(app);
 
-// ─── Socket.io ────────────────────────────────────────────────────────────────
+// ─── Socket.io ───────────────────────────────────────────────────────────────
 const io = new Server(server, {
   cors: {
     origin:  process.env.FRONTEND_URL || 'http://localhost:3000',
@@ -57,11 +41,8 @@ const io = new Server(server, {
 });
 app.set('io', io);
 
-// ─── Security headers (helmet) ────────────────────────────────────────────────
-// helmet() sets: Content-Security-Policy, X-Frame-Options, X-Content-Type-Options,
-// Strict-Transport-Security, Referrer-Policy, X-DNS-Prefetch-Control, and more.
+// ─── Security headers (helmet) ───────────────────────────────────────────────
 app.use(helmet({
-  // Allow our WebSocket upgrade and Stripe JS on the frontend
   contentSecurityPolicy: {
     directives: {
       defaultSrc:  ["'self'"],
@@ -69,57 +50,49 @@ app.use(helmet({
       connectSrc:  ["'self'", process.env.FRONTEND_URL || 'http://localhost:3000'],
       frameSrc:    ["'self'", 'https://js.stripe.com'],
       imgSrc:      ["'self'", 'data:', 'https:'],
-      styleSrc:    ["'self'", "'unsafe-inline'"],  // Next.js injects inline styles
+      styleSrc:    ["'self'", "'unsafe-inline'"],
     },
   },
-  // Enforce HTTPS in production only
   strictTransportSecurity: process.env.NODE_ENV === 'production'
     ? { maxAge: 31536000, includeSubDomains: true }
     : false,
 }));
 
-// ─── CORS ─────────────────────────────────────────────────────────────────────
+// ─── CORS ────────────────────────────────────────────────────────────────────
 app.use(cors({
-  origin:      process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true,
-  methods:     ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  origin:         process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials:    true,
+  methods:        ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-// ─── HTTP request logging (morgan → winston) ──────────────────────────────────
-// In production: combined Apache format piped into winston so it ends up in the
-// same log stream as application logs.
-// In development: concise 'dev' format printed to stdout.
+// ─── HTTP request logging (morgan → winston) ─────────────────────────────────
 if (process.env.NODE_ENV === 'production') {
   app.use(morgan('combined', {
     stream: { write: (msg) => logger.info(msg.trim()) },
   }));
-} else {
+} else if (process.env.NODE_ENV !== 'test') {
+  // Silence morgan during tests to keep Jest output clean
   app.use(morgan('dev'));
 }
 
-// ─── Raw body for Stripe webhooks ────────────────────────────────────────────
-// express.json() consumes the body stream. Stripe requires the raw Buffer to
-// verify the webhook signature, so we capture it on this one path BEFORE the
-// global json() middleware.
+// ─── Raw body for Stripe webhooks (must come before express.json) ────────────
 app.use(
   '/api/billing/webhook',
   express.raw({ type: 'application/json' }),
 );
 
-// ─── JSON body parser (all other routes) ─────────────────────────────────────
-// 10 mb is sufficient for code uploads; the previous 25 mb was overly generous.
+// ─── JSON body parser ────────────────────────────────────────────────────────
 app.use(express.json({ limit: '10mb' }));
 
 // ─── Tiered rate limiters ─────────────────────────────────────────────────────
-// Applied before routes so they short-circuit before any DB/crypto work.
 app.use('/api/auth',     authLimiter);
-app.use('/api/password', authLimiter);    // password-reset routes
-app.use('/api/2fa',      authLimiter);    // TOTP brute-force guard
+app.use('/api/password', authLimiter);
+app.use('/api/2fa',      authLimiter);
 app.use('/api/billing',  billingLimiter);
-app.use('/api',          generalLimiter); // everything else
+app.use('/api',          generalLimiter);
 
-// ─── Routes ───────────────────────────────────────────────────────────────────
+// ─── Routes ──────────────────────────────────────────────────────────────────
 app.use('/api/auth',          require('./routes/auth'));
 app.use('/api/migrations',    require('./routes/migrations'));
 app.use('/api/credentials',   require('./routes/credentials'));
@@ -138,31 +111,23 @@ app.use('/api/update-deploy', require('./routes/updateDeploy'));
 app.use('/api/app-health',    require('./routes/appHealth'));
 app.use('/api/receipt',       require('./routes/receipt'));
 
-// ─── 404 handler ─────────────────────────────────────────────────────────────
+// ─── 404 handler ──────────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
 });
 
-// ─── Global error handler ─────────────────────────────────────────────────────
-// Must be declared with FOUR parameters for Express to recognise it as an error
-// handler. Catches any error passed via next(err) or thrown inside async routes
-// that use a try/catch forwarding to next().
-//
-// In production: logs the full error internally but returns only a generic
-//   message to the client — no stack traces exposed.
-// In development: includes the stack in the response for easier debugging.
+// ─── Global error handler ────────────────────────────────────────────────────
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   const status = err.status || err.statusCode || 500;
   const isDev  = process.env.NODE_ENV !== 'production';
 
-  // Always log the full error server-side
   logger.error('Unhandled error', {
-    message:  err.message,
+    message: err.message,
     status,
-    method:   req.method,
-    path:     req.path,
-    stack:    err.stack,
+    method:  req.method,
+    path:    req.path,
+    stack:   err.stack,
   });
 
   res.status(status).json({
@@ -171,16 +136,19 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ─── Socket.io connection handler ────────────────────────────────────────────
+// ─── Socket.io connection handler ───────────────────────────────────────────
 io.on('connection', socket => {
   socket.on('join',  room => socket.join(room));
   socket.on('leave', room => socket.leave(room));
 });
 
-// ─── Start ────────────────────────────────────────────────────────────────────
-const PORT = process.env.PORT || 4000;
-server.listen(PORT, () => {
-  logger.info(`MigrateBot backend running on :${PORT} [${process.env.NODE_ENV || 'development'}]`);
-});
+// ─── Start (skip when required by tests) ────────────────────────────────────
+if (require.main === module) {
+  const PORT = process.env.PORT || 4000;
+  server.listen(PORT, () => {
+    logger.info(`MigrateBot backend running on :${PORT} [${process.env.NODE_ENV || 'development'}]`);
+  });
+}
 
-module.exports = app; // export for supertest
+// ─── Exports (named export so tests can do: const { app } = require('../server')) ───
+module.exports = { app, server };

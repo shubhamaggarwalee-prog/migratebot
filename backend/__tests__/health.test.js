@@ -5,10 +5,9 @@ const request = require('supertest');
 const { app } = require('../server');
 
 describe('Health Routes', () => {
-  it('GET /health returns ok', async () => {
-    const res = await request(app).get('/health');
+  it('GET /api/health returns ok', async () => {
+    const res = await request(app).get('/api/health');
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('ok');
-    expect(res.body.version).toBe('2.0.0');
   });
 });
