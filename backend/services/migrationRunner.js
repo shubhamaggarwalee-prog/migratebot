@@ -6,25 +6,28 @@
  * Task 17: Updated fire-and-forget email blocks to pass deployedUrls,
  *          migrationId, and user name so the rich email templates have
  *          all the data they need.
+ * Task 19: Wired MigrationAgent — preScan after analysis, autoFix loop
+ *          around each deployment step (supabase / railway / vercel).
  */
 const { supabaseAdmin } = require('../utils/database');
 const { sendMigrationComplete, sendMigrationFailed } = require('./email');
 const { CodeAnalyzer } = require('../agent/analyzer');
-const GitHubService   = require('./github');
-const ReplitService   = require('./replit');
-const SupabaseService = require('./supabase');
-const RailwayService  = require('./railway');
-const VercelService   = require('./vercel');
-const StripeService   = require('./stripe');
-const { decrypt }     = require('../utils/encryption');
-const logger          = require('../utils/logger');
+const GitHubService    = require('./github');
+const ReplitService    = require('./replit');
+const SupabaseService  = require('./supabase');
+const RailwayService   = require('./railway');
+const VercelService    = require('./vercel');
+const StripeService    = require('./stripe');
+const MigrationAgent   = require('./migrationAgent');   // Task 19
+const { decrypt }      = require('../utils/encryption');
+const logger           = require('../utils/logger');
 
 // Broadcast progress to all sockets subscribed to a migration room.
 function broadcast(io, migrationId, payload) {
   if (io) io.to(`migration:${migrationId}`).emit('migration:progress', payload);
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────────────────────
 
 async function log(io, ctx, level, message) {
   const safeLevel = ['info', 'warn', 'error', 'success'].includes(level) ? level : 'info';
@@ -125,7 +128,50 @@ async function runHealthChecks({ frontend, backend, database }) {
   return results;
 }
 
-// ─── Source adapters ──────────────────────────────────────────────────────────────
+// ─── Task 19: Agent step wrapper ─────────────────────────────────────────────────────────────
+
+/**
+ * Runs a deployment step function with one auto-fix retry via MigrationAgent.
+ * If autoFix returns action==='ask', we broadcast `agent:chat-needed` (already done
+ * inside agent.autoFix) and then throw so the migration fails gracefully —
+ * the user can resume from the dashboard once they've answered via AgentChat.
+ *
+ * @param {Function} stepFn     — async () => any
+ * @param {string}   stepName   — 'supabase' | 'railway' | 'vercel'
+ * @param {object}   agent      — MigrationAgent instance
+ * @param {object}   context    — extra data to pass to autoFix
+ * @param {Function} logFn      — bound log() helper
+ */
+async function runStepWithAgentRetry(stepFn, stepName, agent, context, logFn) {
+  try {
+    return await stepFn();
+  } catch (firstErr) {
+    await logFn('warn', `⚠️ ${stepName} step failed — asking MigrationAgent for a fix…`);
+
+    let fix;
+    try {
+      fix = await agent.autoFix(firstErr.message, stepName, context);
+    } catch (agentErr) {
+      logger.warn(`MigrationAgent.autoFix threw: ${agentErr.message}`);
+      throw firstErr; // fall back to original error
+    }
+
+    if (fix.action === 'fix') {
+      await logFn('info', `🧠 Agent applied a patch — retrying ${stepName}…`);
+      // One retry after the patch
+      return await stepFn();
+    }
+
+    // action === 'ask': agent has already broadcast `agent:chat-needed`
+    // Throw a friendly error so the migration is marked failed and the user is notified
+    throw new Error(
+      `Migration paused at ${stepName} step — agent needs user input. ` +
+      `Check the deployment page to continue.`
+    );
+  }
+}
+
+// ─── Source adapters ─────────────────────────────────────────────────────────────────────────────
 
 async function cloneFromGitHub(migration, creds, ctx) {
   const github   = new GitHubService(creds.github);
@@ -181,7 +227,7 @@ async function cloneSource(migration, creds, ctx) {
   }
 }
 
-// ─── Main orchestrator ────────────────────────────────────────────────────────────────
+// ─── Main orchestrator ────────────────────────────────────────────────────────────────────────
 
 async function runMigration(migration, job, io) {
   const { id: migrationId } = migration;
@@ -196,7 +242,7 @@ async function runMigration(migration, job, io) {
 
     ctx.creds = await loadCredentials(migration.user_id, migration.platforms, migration.source_platform);
 
-    // ── Step 1: Clone + AI Analysis ──────────────────────────────────────────────────────
+    // ── Step 1: Clone + AI Analysis ────────────────────────────────────────────────
     await log(io, ctx, 'info', 'Step 1/5 — Cloning repository and running AI analysis');
     broadcast(io, migrationId, { type: 'task-start', taskId: 'analyze', title: 'AI codebase analysis' });
 
@@ -213,111 +259,166 @@ async function runMigration(migration, job, io) {
     broadcast(io, migrationId, { type: 'task-done', taskId: 'analyze', result: { framework: analysis.framework } });
     if (job) await job.progress(20);
 
-    // ── Step 2: Supabase ──────────────────────────────────────────────────────────
+    // ── Task 19: MigrationAgent preScan ─────────────────────────────────────────
+    // Fetch the user's Anthropic key to initialise the agent
+    let agent = null;
+    try {
+      const { data: credRow } = await supabaseAdmin
+        .from('credentials')
+        .select('encrypted_data')
+        .eq('migration_id', migrationId)
+        .eq('user_id', migration.user_id)
+        .eq('platform', 'anthropic')
+        .maybeSingle();
+
+      if (credRow) {
+        const parsed     = JSON.parse(decrypt(credRow.encrypted_data));
+        const anthropicKey = parsed.token || parsed.anthropicKey || '';
+        if (anthropicKey) {
+          agent = new MigrationAgent(anthropicKey, io, migrationId);
+          await agent.preScan(files, analysis);
+          await log(io, ctx, 'info', '🧠 Agent pre-scan complete — health report sent to frontend');
+        }
+      }
+    } catch (agentInitErr) {
+      // Non-fatal — agent is optional; migration proceeds without it
+      logger.warn(`MigrationAgent init/preScan failed: ${agentInitErr.message}`);
+    }
+    ctx.agent = agent;
+
+    const logFn = (level, msg) => log(io, ctx, level, msg);
+
+    // ── Step 2: Supabase ─────────────────────────────────────────────────────────────
     if (migration.platforms.includes('supabase')) {
       broadcast(io, migrationId, { type: 'task-start', taskId: 'supabase', title: 'Creating Supabase project' });
       await log(io, ctx, 'info', 'Step 2/5 — Creating Supabase project');
 
-      const sb          = new SupabaseService(ctx.creds.supabase);
-      const projectName = `${repoInfo.name}-${Date.now()}`.slice(0, 40).toLowerCase().replace(/[^a-z0-9-]/g, '-');
-      const project     = await sb.createProject({ name: projectName });
-      ctx.supabaseProject = project;
-      await log(io, ctx, 'info', `Supabase project created: ${project.projectId}`);
+      const supabaseStepFn = async () => {
+        const sb          = new SupabaseService(ctx.creds.supabase);
+        const projectName = `${repoInfo.name}-${Date.now()}`.slice(0, 40).toLowerCase().replace(/[^a-z0-9-]/g, '-');
+        const project     = await sb.createProject({ name: projectName });
+        ctx.supabaseProject = project;
+        await log(io, ctx, 'info', `Supabase project created: ${project.projectId}`);
 
-      if (analysis.supabaseSchema || analysis.databaseSchema) {
-        const sql = analysis.supabaseSchema
-          || await analyzer.generateSupabaseMigration(analysis.databaseSchema, analysis.databaseType);
-        await sb.runMigration(project.projectId, sql);
-        await log(io, ctx, 'info', '✓ Database schema migrated');
+        if (analysis.supabaseSchema || analysis.databaseSchema) {
+          const sql = analysis.supabaseSchema
+            || await analyzer.generateSupabaseMigration(analysis.databaseSchema, analysis.databaseType);
+          await sb.runMigration(project.projectId, sql);
+          await log(io, ctx, 'info', '✓ Database schema migrated');
+        }
+
+        await sb.configureAuth(project.projectId, {
+          siteUrl:      'https://localhost:3000',
+          redirectUrls: ['https://localhost:3000/auth/callback'],
+        });
+
+        await log(io, ctx, 'success', `✓ Supabase ready: ${project.projectUrl}`);
+        broadcast(io, migrationId, { type: 'task-done', taskId: 'supabase', result: { url: project.projectUrl } });
+      };
+
+      if (agent) {
+        await runStepWithAgentRetry(supabaseStepFn, 'supabase', agent, {}, logFn);
+      } else {
+        await supabaseStepFn();
       }
-
-      await sb.configureAuth(project.projectId, {
-        siteUrl:      'https://localhost:3000',
-        redirectUrls: ['https://localhost:3000/auth/callback'],
-      });
-
-      await log(io, ctx, 'success', `✓ Supabase ready: ${project.projectUrl}`);
-      broadcast(io, migrationId, { type: 'task-done', taskId: 'supabase', result: { url: project.projectUrl } });
     }
     if (job) await job.progress(40);
 
     ctx.envVars = buildEnvVars(analysis, ctx);
 
-    // ── Step 3: Railway ───────────────────────────────────────────────────────────
+    // ── Step 3: Railway ─────────────────────────────────────────────────────────────
     if (migration.platforms.includes('railway')) {
       broadcast(io, migrationId, { type: 'task-start', taskId: 'railway', title: 'Deploying backend to Railway' });
       await log(io, ctx, 'info', 'Step 3/5 — Deploying backend to Railway');
 
-      const railway = new RailwayService(ctx.creds.railway);
-      const project = await railway.createProject(repoInfo.name);
-      const env     = await railway.getEnvironment(project.id);
+      const railwayStepFn = async () => {
+        const railway = new RailwayService(ctx.creds.railway);
+        const project = await railway.createProject(repoInfo.name);
+        const env     = await railway.getEnvironment(project.id);
 
-      let repoOwner, repoName;
-      if (ctx.github) {
-        ({ owner: repoOwner, repo: repoName } = ctx.github.parseRepoUrl(migration.repourl));
+        let repoOwner, repoName;
+        if (ctx.github) {
+          ({ owner: repoOwner, repo: repoName } = ctx.github.parseRepoUrl(migration.repourl));
+        } else {
+          repoOwner = 'migratebot';
+          repoName  = repoInfo.name;
+          await log(io, ctx, 'warn',
+            'Non-GitHub source detected — Railway deploy requires a GitHub repo. '
+            + 'Auto-push to temp repo is a planned enhancement.');
+        }
+
+        const service = await railway.createGithubService(project.id, env.id, {
+          repoOwner, repoName, branch: migration.repobranch || 'main',
+        });
+        await railway.setEnvVars(project.id, env.id, service.id, ctx.envVars.railway);
+        await railway.triggerDeploy(service.id, env.id);
+        const result = await railway.waitForDeployment(service.id, env.id);
+        ctx.railwayUrl = result.url;
+
+        ctx.envVars = buildEnvVars(analysis, ctx);
+        await log(io, ctx, 'success', `✓ Railway live: ${result.url}`);
+        broadcast(io, migrationId, { type: 'task-done', taskId: 'railway', result: { url: result.url } });
+      };
+
+      if (agent) {
+        await runStepWithAgentRetry(railwayStepFn, 'railway', agent,
+          { repoUrl: migration.repourl }, logFn);
       } else {
-        repoOwner = 'migratebot';
-        repoName  = repoInfo.name;
-        await log(io, ctx, 'warn',
-          'Non-GitHub source detected — Railway deploy requires a GitHub repo. '
-          + 'Auto-push to temp repo is a planned enhancement.');
+        await railwayStepFn();
       }
-
-      const service = await railway.createGithubService(project.id, env.id, {
-        repoOwner, repoName, branch: migration.repobranch || 'main',
-      });
-      await railway.setEnvVars(project.id, env.id, service.id, ctx.envVars.railway);
-      await railway.triggerDeploy(service.id, env.id);
-      const result = await railway.waitForDeployment(service.id, env.id);
-      ctx.railwayUrl = result.url;
-
-      ctx.envVars = buildEnvVars(analysis, ctx);
-      await log(io, ctx, 'success', `✓ Railway live: ${result.url}`);
-      broadcast(io, migrationId, { type: 'task-done', taskId: 'railway', result: { url: result.url } });
     }
     if (job) await job.progress(65);
 
-    // ── Step 4: Vercel ────────────────────────────────────────────────────────────
+    // ── Step 4: Vercel ─────────────────────────────────────────────────────────────
     if (migration.platforms.includes('vercel')) {
       broadcast(io, migrationId, { type: 'task-start', taskId: 'vercel', title: 'Deploying frontend to Vercel' });
       await log(io, ctx, 'info', 'Step 4/5 — Deploying frontend to Vercel');
 
-      const vercel    = new VercelService(ctx.creds.vercel);
-      const repoOwner = ctx.github
-        ? ctx.github.parseRepoUrl(migration.repourl).owner
-        : 'migratebot';
-      const project   = await vercel.createProject({
-        name:      repoInfo.name,
-        framework: analysis.framework,
-        gitRepo:   `${repoOwner}/${repoInfo.name}`,
-      });
-
-      const envArray = Object.entries({
-        ...ctx.envVars.vercel,
-        ...(ctx.railwayUrl ? { NEXT_PUBLIC_API_URL: ctx.railwayUrl } : {}),
-      }).map(([key, value]) => ({ key, value }));
-      await vercel.setEnvVars(project.projectId, envArray);
-
-      const deploymentId = await vercel.createDeploymentFromGit(project.projectId, {
-        branch: migration.repobranch || 'main',
-      });
-      const deployResult = await vercel.waitForDeployment(deploymentId);
-      ctx.vercelUrl = deployResult.url;
-
-      if (ctx.supabaseProject) {
-        const sb = new SupabaseService(ctx.creds.supabase);
-        await sb.configureAuth(ctx.supabaseProject.projectId, {
-          siteUrl:      ctx.vercelUrl,
-          redirectUrls: [`${ctx.vercelUrl}/auth/callback`],
+      const vercelStepFn = async () => {
+        const vercel    = new VercelService(ctx.creds.vercel);
+        const repoOwner = ctx.github
+          ? ctx.github.parseRepoUrl(migration.repourl).owner
+          : 'migratebot';
+        const project   = await vercel.createProject({
+          name:      repoInfo.name,
+          framework: analysis.framework,
+          gitRepo:   `${repoOwner}/${repoInfo.name}`,
         });
-      }
 
-      await log(io, ctx, 'success', `✓ Vercel live: ${deployResult.url}`);
-      broadcast(io, migrationId, { type: 'task-done', taskId: 'vercel', result: { url: deployResult.url } });
+        const envArray = Object.entries({
+          ...ctx.envVars.vercel,
+          ...(ctx.railwayUrl ? { NEXT_PUBLIC_API_URL: ctx.railwayUrl } : {}),
+        }).map(([key, value]) => ({ key, value }));
+        await vercel.setEnvVars(project.projectId, envArray);
+
+        const deploymentId = await vercel.createDeploymentFromGit(project.projectId, {
+          branch: migration.repobranch || 'main',
+        });
+        const deployResult = await vercel.waitForDeployment(deploymentId);
+        ctx.vercelUrl = deployResult.url;
+
+        if (ctx.supabaseProject) {
+          const sb = new SupabaseService(ctx.creds.supabase);
+          await sb.configureAuth(ctx.supabaseProject.projectId, {
+            siteUrl:      ctx.vercelUrl,
+            redirectUrls: [`${ctx.vercelUrl}/auth/callback`],
+          });
+        }
+
+        await log(io, ctx, 'success', `✓ Vercel live: ${deployResult.url}`);
+        broadcast(io, migrationId, { type: 'task-done', taskId: 'vercel', result: { url: deployResult.url } });
+      };
+
+      if (agent) {
+        await runStepWithAgentRetry(vercelStepFn, 'vercel', agent,
+          { framework: analysis.framework }, logFn);
+      } else {
+        await vercelStepFn();
+      }
     }
     if (job) await job.progress(85);
 
-    // ── Step 5: Health checks ──────────────────────────────────────────────────────
+    // ── Step 5: Health checks ───────────────────────────────────────────────────────────
     broadcast(io, migrationId, { type: 'task-start', taskId: 'health', title: 'Running health checks' });
     await log(io, ctx, 'info', 'Step 5/5 — Running health checks');
     const healthResults = await runHealthChecks({
@@ -329,7 +430,7 @@ async function runMigration(migration, job, io) {
     await log(io, ctx, allHealthy ? 'success' : 'warn', `Health checks: ${JSON.stringify(healthResults)}`);
     broadcast(io, migrationId, { type: 'task-done', taskId: 'health', result: healthResults });
 
-    // ── Complete ────────────────────────────────────────────────────────────────────
+    // ── Complete ───────────────────────────────────────────────────────────────────────────────
     const deployedUrls = {
       frontend: ctx.vercelUrl                   || null,
       backend:  ctx.railwayUrl                  || null,
@@ -344,7 +445,7 @@ async function runMigration(migration, job, io) {
     broadcast(io, migrationId, { type: 'complete', status: 'complete', deployedUrls });
     if (job) await job.progress(100);
 
-    // ── Fire-and-forget success email (Task 17) ─────────────────────────────────────
+    // ── Fire-and-forget success email (Task 17) ──────────────────────────────────────
     try {
       const { data: authData } = await supabaseAdmin.auth.admin.getUserById(migration.user_id);
       const userEmail = authData?.user?.email;
@@ -382,7 +483,7 @@ async function runMigration(migration, job, io) {
       }
     }
 
-    // ── Fire-and-forget failure email (Task 17) ─────────────────────────────────────
+    // ── Fire-and-forget failure email (Task 17) ──────────────────────────────────────
     try {
       const { data: authData } = await supabaseAdmin.auth.admin.getUserById(migration.user_id);
       const userEmail = authData?.user?.email;
