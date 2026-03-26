@@ -1,7 +1,10 @@
 /**
  * frontend/pages/dashboard.jsx
  * Main dashboard — lists all migrations + Push a Change flow
- * Task 15: Added HealthWidget inside YourAppSection for each live URL.
+ * Task 15:  Added HealthWidget inside YourAppSection for each live URL.
+ * G1:       Added OnboardingTour for first-time users.
+ *           Added tour anchor IDs: tour-new-migration, tour-stats,
+ *           tour-migrations-list, tour-settings (on the Layout nav link).
  */
 import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/router';
@@ -13,6 +16,7 @@ import Layout from '../components/Layout';
 import Term from '../components/Term';
 import PushChange from '../components/PushChange';
 import HealthWidget from '../components/HealthWidget';
+import OnboardingTour from '../components/OnboardingTour';  // G1
 
 const C = {
   amber: '#D97706', amberBg: '#FEF3C7', amberDark: '#B45309',
@@ -132,7 +136,6 @@ function YourAppSection({ migration }) {
 
   return (
     <div style={{ background: '#fff', borderRadius: 16, border: `2px solid ${C.green}`, marginBottom: '2rem', overflow: 'hidden', boxShadow: '0 4px 24px rgba(5,150,105,.1)' }}>
-      {/* Card header */}
       <div style={{ background: C.greenBg, padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: 28 }}>🎉</span>
@@ -151,11 +154,7 @@ function YourAppSection({ migration }) {
 
       {expanded && (
         <div style={{ padding: '20px 24px' }}>
-
-          {/* ── Health widget — sits at the very top of the expanded panel ── */}
           <HealthWidget migration={migration} />
-
-          {/* What we deployed */}
           <div style={{ background: C.blueBg, border: `1px solid ${C.blue}33`, borderRadius: 10, padding: '14px 16px', marginBottom: 20 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: C.blue, marginBottom: 6 }}>📋 What we <Term id="deployment">deployed</Term> for you</div>
             <p style={{ fontSize: 14, color: C.inkMid, lineHeight: 1.7, margin: 0 }}>
@@ -164,8 +163,6 @@ function YourAppSection({ migration }) {
               {' '}Anyone can now visit your app from any device, anywhere.
             </p>
           </div>
-
-          {/* Live links */}
           {urlItems.length > 0 && (
             <div style={{ marginBottom: 20 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginBottom: 10 }}>🔗 Your live links</div>
@@ -179,8 +176,6 @@ function YourAppSection({ migration }) {
               ))}
             </div>
           )}
-
-          {/* Savings box */}
           <div style={{ background: C.greenBg, border: `1px solid ${C.green}33`, borderRadius: 10, padding: '14px 16px' }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: C.green, marginBottom: 10 }}>💰 What you saved</div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -205,7 +200,7 @@ function YourAppSection({ migration }) {
 // ─── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const router = useRouter();
-  const { user, loading }           = useAuth();
+  const { user, loading }                  = useAuth();
   const { migrations, isLoading, refresh } = useMigrations();
 
   useEffect(() => { if (!loading && !user) router.push('/login'); }, [user, loading, router]);
@@ -217,26 +212,34 @@ export default function Dashboard() {
 
   return (
     <Layout>
+      {/* G1: Onboarding tour — only renders once for new users */}
+      <OnboardingTour />
+
       {/* Page header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
         <div>
           <h1 style={{ fontFamily: 'Georgia, serif', fontSize: 28, color: C.ink, margin: 0 }}>Dashboard</h1>
           <p style={{ color: C.inkMid, marginTop: 4 }}>Welcome back, {user?.name || user?.email}</p>
         </div>
-        <Link href="/migrate" style={{ padding: '10px 20px', background: C.amber, color: '#fff', borderRadius: 8, textDecoration: 'none', fontWeight: 600, fontSize: 14 }}>+ New <Term id="migration">Migration</Term></Link>
+        {/* G1: tour anchor on the New Migration button */}
+        <Link
+          id="tour-new-migration"
+          href="/migrate"
+          style={{ padding: '10px 20px', background: C.amber, color: '#fff', borderRadius: 8, textDecoration: 'none', fontWeight: 600, fontSize: 14 }}
+        >
+          + New <Term id="migration">Migration</Term>
+        </Link>
       </div>
 
-      {/* Your App section (includes HealthWidget at the top) */}
       {latestSuccess && <YourAppSection migration={latestSuccess} />}
-
-      {/* Push a Change */}
       {latestSuccess && <PushChange migration={latestSuccess} onSuccess={refresh} />}
-
-      {/* Claude chat */}
       {latestSuccess && <ClaudeChat migration={latestSuccess} />}
 
-      {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: '2rem' }}>
+      {/* G1: tour anchor on stats row */}
+      <div
+        id="tour-stats"
+        style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: '2rem' }}
+      >
         {[
           { label: 'Total',       value: migrations.length,                                                           color: C.amber },
           { label: 'Complete',    value: migrations.filter(m => m.status === 'complete').length,                      color: C.green },
@@ -250,8 +253,11 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Migrations list */}
-      <div style={{ background: '#fff', borderRadius: 12, border: `1px solid ${C.border}` }}>
+      {/* G1: tour anchor on migrations list */}
+      <div
+        id="tour-migrations-list"
+        style={{ background: '#fff', borderRadius: 12, border: `1px solid ${C.border}` }}
+      >
         <div style={{ padding: '1rem 1.5rem', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span style={{ fontWeight: 600, color: C.ink }}><Term id="migration">Migrations</Term></span>
           <button onClick={refresh} style={{ background: 'none', border: 'none', color: C.amber, cursor: 'pointer', fontSize: 13 }}>Refresh</button>
