@@ -7,14 +7,15 @@ const { app } = require('../server');
 const FAKE_TOKEN = 'Bearer invalid.jwt.token';
 
 describe('Credentials Routes — auth guards', () => {
-  describe('GET /api/credentials', () => {
+  // GET /api/credentials/:migration_id  (no bare GET / exists)
+  describe('GET /api/credentials/:migration_id', () => {
     it('returns 401 with no token', async () => {
-      const res = await request(app).get('/api/credentials');
+      const res = await request(app).get('/api/credentials/some-migration-id');
       expect(res.status).toBe(401);
     });
     it('returns 401 with invalid token', async () => {
       const res = await request(app)
-        .get('/api/credentials')
+        .get('/api/credentials/some-migration-id')
         .set('Authorization', FAKE_TOKEN);
       expect(res.status).toBe(401);
     });
