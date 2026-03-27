@@ -1,6 +1,6 @@
 /**
  * frontend/lib/api.js
- * Gap 9 — Centralised API client.
+ * Centralised API client.
  *
  * Thin wrapper around fetch that:
  *   1. Automatically attaches the JWT from localStorage.
@@ -22,6 +22,9 @@
  *   await api.put('/api/notifications/prefs', { migration_completed: false });
  *   await api.delete(`/api/credentials/${id}`);
  */
+
+// ─── Base URL ────────────────────────────────────────────────────────────────
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 // ─── Structured error class ─────────────────────────────────────────────────────
 
@@ -70,9 +73,12 @@ async function request(path, options = {}) {
     ...(options.headers || {}),
   };
 
+  // Prefix relative paths with the backend base URL
+  const url = path.startsWith('http') ? path : `${BASE_URL}${path}`;
+
   let response;
   try {
-    response = await fetch(path, {
+    response = await fetch(url, {
       ...options,
       headers,
       // Ensure body is JSON-encoded when provided as an object
@@ -155,7 +161,8 @@ const api = {
    */
   upload(path, formData, options = {}) {
     const token = getToken();
-    return request(path, {
+    const url = path.startsWith('http') ? path : `${BASE_URL}${path}`;
+    return request(url, {
       method: 'POST',
       headers: {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
