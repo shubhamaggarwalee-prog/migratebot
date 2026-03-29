@@ -30,15 +30,28 @@ router.post('/register', async (req, res) => {
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+    if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
+
+    // First, check if user exists
+    const { data: listData, error: listError } = await supabaseAdmin.auth.admin.listUsers();
+    const userExists = !listError && listData?.users?.some(
+      u => u.email?.toLowerCase() === email.toLowerCase().trim()
+    );
 
     const { data, error } = await supabaseAdmin.auth.signInWithPassword({ email, password });
-    if (error) return res.status(401).json({ error: 'Invalid credentials' });
+
+    if (error) {
+      if (!userExists) {
+        return res.status(401).json({ error: 'No account found with that email. Please sign up first.' });
+      }
+      return res.status(401).json({ error: 'Incorrect password. Please try again.' });
+    }
 
     const token = signToken({ userId: data.user.id, email });
     res.json({ token, user: { id: data.user.id, email, name: data.user.user_metadata?.name } });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Login error:', err);
+    res.status(500).json({ error: 'Server error. Please try again.' });
   }
 });
 
