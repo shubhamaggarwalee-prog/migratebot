@@ -6,7 +6,9 @@
  *   1. Automatically attaches the JWT from localStorage.
  *   2. Serialises request bodies to JSON.
  *   3. Parses response JSON and throws a structured ApiError on non-2xx.
- *   4. On 401 — clears the stored token and redirects to /login.
+ *   4. On 401 — clears the stored token and redirects to /login,
+ *      UNLESS the request is to an auth endpoint (login/register/signup),
+ *      where a 401 just means wrong credentials.
  *   5. On network failure — wraps the error with a human-friendly message.
  *
  * Usage:
@@ -25,6 +27,14 @@
 
 // ─── Base URL ────────────────────────────────────────────────────────────────
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
+
+// ─── Auth endpoints that should NOT trigger a session-expired redirect ────────
+// A 401 on these routes means wrong credentials, not an expired session.
+const AUTH_PATHS = ['/auth/login', '/auth/register', '/auth/signup', '/api/auth/login', '/api/auth/register', '/api/auth/signup'];
+
+function isAuthPath(path) {
+  return AUTH_PATHS.some((p) => path.includes(p));
+}
 
 // ─── Structured error class ─────────────────────────────────────────────────────
 
@@ -106,13 +116,18 @@ async function request(path, options = {}) {
     body = {};
   }
 
-  // 401 — session expired or revoked
+  // 401 — only redirect to session_expired for authenticated routes.
+  // On auth endpoints (login/register), a 401 means wrong credentials —
+  // let the error bubble up so the form can display the message.
   if (response.status === 401) {
-    clearTokenAndRedirect();
-    throw new ApiError('Session expired. Redirecting to login…', 401, body);
+    if (!isAuthPath(path)) {
+      clearTokenAndRedirect();
+      throw new ApiError('Session expired. Redirecting to login…', 401, body);
+    }
+    // Auth endpoint 401 — fall through to the error throw below
   }
 
-  // Other non-2xx
+  // Other non-2xx (and auth-endpoint 401s)
   if (!response.ok) {
     const message =
       (body && body.error) ||
