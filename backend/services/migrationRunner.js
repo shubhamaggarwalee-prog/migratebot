@@ -8,6 +8,8 @@
  *          all the data they need.
  * Task 19: Wired MigrationAgent — preScan after analysis, autoFix loop
  *          around each deployment step (supabase / railway / vercel).
+ * Fix 3:   Verify Replit project access before cloning; show actionable
+ *          error if access fails and no token was provided.
  */
 const { supabaseAdmin } = require('../utils/database');
 const { sendMigrationComplete, sendMigrationFailed } = require('./email');
@@ -79,7 +81,12 @@ async function loadCredentials(userId, platforms, sourcePlatform) {
     }
   }
 
-  const missing = uniquePlatforms.filter(p => !creds[p]);
+  // For Replit, a missing credential is allowed — we handle it gracefully in
+  // cloneFromReplit with a user-facing error (Fix 3).
+  const missing = uniquePlatforms.filter(p => {
+    if (p === 'replit') return false; // checked at clone time, not here
+    return !creds[p];
+  });
   if (missing.length) throw new Error(`Missing credentials for: ${missing.join(', ')}`);
   return creds;
 }
@@ -130,18 +137,6 @@ async function runHealthChecks({ frontend, backend, database }) {
 
 // ─── Task 19: Agent step wrapper ─────────────────────────────────────────────────────────────
 
-/**
- * Runs a deployment step function with one auto-fix retry via MigrationAgent.
- * If autoFix returns action==='ask', we broadcast `agent:chat-needed` (already done
- * inside agent.autoFix) and then throw so the migration fails gracefully —
- * the user can resume from the dashboard once they've answered via AgentChat.
- *
- * @param {Function} stepFn     — async () => any
- * @param {string}   stepName   — 'supabase' | 'railway' | 'vercel'
- * @param {object}   agent      — MigrationAgent instance
- * @param {object}   context    — extra data to pass to autoFix
- * @param {Function} logFn      — bound log() helper
- */
 async function runStepWithAgentRetry(stepFn, stepName, agent, context, logFn) {
   try {
     return await stepFn();
@@ -153,17 +148,14 @@ async function runStepWithAgentRetry(stepFn, stepName, agent, context, logFn) {
       fix = await agent.autoFix(firstErr.message, stepName, context);
     } catch (agentErr) {
       logger.warn(`MigrationAgent.autoFix threw: ${agentErr.message}`);
-      throw firstErr; // fall back to original error
+      throw firstErr;
     }
 
     if (fix.action === 'fix') {
       await logFn('info', `🧠 Agent applied a patch — retrying ${stepName}…`);
-      // One retry after the patch
       return await stepFn();
     }
 
-    // action === 'ask': agent has already broadcast `agent:chat-needed`
-    // Throw a friendly error so the migration is marked failed and the user is notified
     throw new Error(
       `Migration paused at ${stepName} step — agent needs user input. ` +
       `Check the deployment page to continue.`
@@ -181,25 +173,58 @@ async function cloneFromGitHub(migration, creds, ctx) {
   return { files, repoInfo };
 }
 
+// Fix 3: Verify Replit project access before cloning.
+// If the project is inaccessible and no token was provided, throw a clear
+// user-facing error that directs them to add their Replit token.
 async function cloneFromReplit(migration, creds, ctx) {
-  const replit = new ReplitService(creds.replit);
-  const user   = await replit.getUser();
-  logger.info(`Replit auth OK — signed in as @${user.username}`);
-  const { username: parsedUser, slug } = replit.parseReplUrl(migration.repourl);
-  const username = parsedUser || user.username;
-  const replInfo = await replit.getReplInfo(username, slug);
-  const files    = await replit.readFiles(username, slug);
-  ctx.replit = replit;
-  return {
-    files,
-    repoInfo: {
-      name:          replInfo.slug,
-      fullName:      `@${username}/${replInfo.slug}`,
-      defaultBranch: 'main',
-      language:      replInfo.language,
-      description:   replInfo.description,
-    },
-  };
+  const token = creds.replit || ctx.replitToken || null;
+
+  // Attempt access verification before any heavy work.
+  try {
+    const replit = new ReplitService(token);
+    await replit.getUser(); // throws if token is missing or invalid
+    const { username: parsedUser, slug } = replit.parseReplUrl(migration.repourl);
+
+    // Verify the specific repl is reachable.
+    const user     = await replit.getUser();
+    const username = parsedUser || user.username;
+    await replit.getReplInfo(username, slug); // throws 403/404 if private + no token
+
+    const replInfo = await replit.getReplInfo(username, slug);
+    const files    = await replit.readFiles(username, slug);
+    ctx.replit = replit;
+    return {
+      files,
+      repoInfo: {
+        name:          replInfo.slug,
+        fullName:      `@${username}/${replInfo.slug}`,
+        defaultBranch: 'main',
+        language:      replInfo.language,
+        description:   replInfo.description,
+      },
+    };
+  } catch (err) {
+    // If the error looks like an access/auth failure and no token was supplied,
+    // surface a friendly, actionable message to the user.
+    const isAccessError =
+      err.message?.toLowerCase().includes('403') ||
+      err.message?.toLowerCase().includes('401') ||
+      err.message?.toLowerCase().includes('forbidden') ||
+      err.message?.toLowerCase().includes('unauthorized') ||
+      err.message?.toLowerCase().includes('not found') ||
+      err.message?.toLowerCase().includes('404') ||
+      err.message?.toLowerCase().includes('private');
+
+    if (isAccessError && !token) {
+      throw new Error(
+        'We could not access your Replit project. ' +
+        'If it is private please add your Replit token in the setup step.'
+      );
+    }
+
+    // Re-throw the original error for any other failure (network issues, etc.)
+    throw err;
+  }
 }
 
 async function cloneFromUrl(migration, creds, ctx) {
@@ -260,7 +285,6 @@ async function runMigration(migration, job, io) {
     if (job) await job.progress(20);
 
     // ── Task 19: MigrationAgent preScan ─────────────────────────────────────────
-    // Fetch the user's Anthropic key to initialise the agent
     let agent = null;
     try {
       const { data: credRow } = await supabaseAdmin
@@ -281,7 +305,6 @@ async function runMigration(migration, job, io) {
         }
       }
     } catch (agentInitErr) {
-      // Non-fatal — agent is optional; migration proceeds without it
       logger.warn(`MigrationAgent init/preScan failed: ${agentInitErr.message}`);
     }
     ctx.agent = agent;
