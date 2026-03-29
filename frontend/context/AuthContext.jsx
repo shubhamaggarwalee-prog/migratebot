@@ -3,7 +3,7 @@
  * Global auth state — login, register, logout
  */
 import { createContext, useContext, useEffect, useState } from 'react';
-import { apiClient } from '../lib/api';
+import api from '../lib/api';
 import { getToken, setToken, removeToken, getUser, setUser, removeUser } from '../lib/auth';
 
 const AuthContext = createContext(null);
@@ -17,14 +17,14 @@ export function AuthProvider({ children }) {
     const cached = getUser();
     if (token && cached) {
       setUserState(cached);
-      apiClient.get('/auth/me').then(r => { setUserState(r.user); setUser(r.user); }).catch(() => { removeToken(); removeUser(); setUserState(null); }).finally(() => setLoading(false));
+      api.get('/api/auth/me').then(r => { setUserState(r.user); setUser(r.user); }).catch(() => { removeToken(); removeUser(); setUserState(null); }).finally(() => setLoading(false));
     } else {
       setLoading(false);
     }
   }, []);
 
   const login = async (email, password) => {
-    const data = await apiClient.post('/auth/login', { email, password });
+    const data = await api.post('/api/auth/login', { email, password });
     setToken(data.token);
     setUser(data.user);
     setUserState(data.user);
@@ -32,7 +32,7 @@ export function AuthProvider({ children }) {
   };
 
   const register = async (name, email, password) => {
-    const data = await apiClient.post('/auth/register', { name, email, password });
+    const data = await api.post('/api/auth/register', { name, email, password });
     setToken(data.token);
     setUser(data.user);
     setUserState(data.user);
