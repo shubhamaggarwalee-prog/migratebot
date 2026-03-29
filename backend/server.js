@@ -1,14 +1,5 @@
 /**
  * backend/server.js
- * Gap 12 — Security hardening
- *
- * Changes vs the previous version:
- *   1. helmet()           — 15 security headers (CSP, HSTS, X-Frame-Options, etc.)
- *   2. morgan             — structured HTTP request logging via winston
- *   3. Tiered rate limits — strict on auth/billing/2fa, relaxed on general API
- *   4. Raw-body bypass    — Stripe webhook needs the raw buffer before json()
- *   5. Global error handler — catches any unhandled error, logs it, returns 500
- *                             without leaking stack traces in production
  */
 
 const express    = require('express');
@@ -20,6 +11,7 @@ const { Server } = require('socket.io');
 require('dotenv').config();
 
 const logger = require('./utils/logger');
+const { sanitizeErrors, sanitizeLogs } = require('./middleware/errorSanitizer');
 
 // ─── Rate-limit factories ─────────────────────────────────────────────────────
 const rateLimit = require('./middleware/rateLimit');
@@ -72,9 +64,11 @@ if (process.env.NODE_ENV === 'production') {
     stream: { write: (msg) => logger.info(msg.trim()) },
   }));
 } else if (process.env.NODE_ENV !== 'test') {
-  // Silence morgan during tests to keep Jest output clean
   app.use(morgan('dev'));
 }
+
+// ─── Log sanitizer — scrub sensitive fields from req.body before any logging ─
+app.use(sanitizeLogs);
 
 // ─── Raw body for Stripe webhooks (must come before express.json) ────────────
 app.use(
@@ -111,30 +105,13 @@ app.use('/api/update-deploy', require('./routes/updateDeploy'));
 app.use('/api/app-health',    require('./routes/appHealth'));
 app.use('/api/receipt',       require('./routes/receipt'));
 
-// ─── 404 handler ──────────────────────────────────────────────────────────
+// ─── 404 handler ─────────────────────────────────────────────────────────────
 app.use((req, res) => {
-  res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
+  res.status(404).json({ error: 'The requested resource was not found.' });
 });
 
-// ─── Global error handler ────────────────────────────────────────────────────
-// eslint-disable-next-line no-unused-vars
-app.use((err, req, res, next) => {
-  const status = err.status || err.statusCode || 500;
-  const isDev  = process.env.NODE_ENV !== 'production';
-
-  logger.error('Unhandled error', {
-    message: err.message,
-    status,
-    method:  req.method,
-    path:    req.path,
-    stack:   err.stack,
-  });
-
-  res.status(status).json({
-    error: isDev ? err.message : 'An unexpected error occurred',
-    ...(isDev && { stack: err.stack }),
-  });
-});
+// ─── Global error handler (sanitized — no stack traces or raw errors to client)
+app.use(sanitizeErrors);
 
 // ─── Socket.io connection handler ───────────────────────────────────────────
 io.on('connection', socket => {
@@ -150,5 +127,4 @@ if (require.main === module) {
   });
 }
 
-// ─── Exports (named export so tests can do: const { app } = require('../server')) ───
 module.exports = { app, server };
