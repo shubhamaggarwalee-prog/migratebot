@@ -10,6 +10,8 @@
  *          around each deployment step (supabase / railway / vercel).
  * Fix 3:   Verify Replit project access before cloning; show actionable
  *          error if access fails and no token was provided.
+ * Fix 5:   DB safety check — skip Supabase if no database detected in
+ *          the codebase; tell the user plainly what happened.
  */
 const { supabaseAdmin } = require('../utils/database');
 const { sendMigrationComplete, sendMigrationFailed } = require('./email');
@@ -84,7 +86,7 @@ async function loadCredentials(userId, platforms, sourcePlatform) {
   // For Replit, a missing credential is allowed — we handle it gracefully in
   // cloneFromReplit with a user-facing error (Fix 3).
   const missing = uniquePlatforms.filter(p => {
-    if (p === 'replit') return false; // checked at clone time, not here
+    if (p === 'replit') return false;
     return !creds[p];
   });
   if (missing.length) throw new Error(`Missing credentials for: ${missing.join(', ')}`);
@@ -135,6 +137,28 @@ async function runHealthChecks({ frontend, backend, database }) {
   return results;
 }
 
+// ─── Fix 5: Detect whether a project has a database ──────────────────────────────────────
+
+const DB_DEPS = new Set([
+  'pg', 'postgres', 'mysql', 'mysql2', 'mongoose', 'mongodb',
+  'sequelize', 'prisma', 'typeorm', 'knex', 'supabase', '@supabase/supabase-js',
+  'better-sqlite3', 'sqlite3', 'redis', 'ioredis', 'drizzle-orm',
+]);
+
+function projectHasDatabase(analysis) {
+  if (analysis.databaseSchema)  return true;
+  if (analysis.supabaseSchema)  return true;
+  if (analysis.databaseType)    return true;
+  if (analysis.hasDatabase)     return true; // explicit flag some analyzers set
+
+  const deps = {
+    ...(analysis.dependencies        || {}),
+    ...(analysis.devDependencies     || {}),
+    ...(analysis.peerDependencies    || {}),
+  };
+  return Object.keys(deps).some(dep => DB_DEPS.has(dep));
+}
+
 // ─── Task 19: Agent step wrapper ─────────────────────────────────────────────────────────────
 
 async function runStepWithAgentRetry(stepFn, stepName, agent, context, logFn) {
@@ -174,21 +198,17 @@ async function cloneFromGitHub(migration, creds, ctx) {
 }
 
 // Fix 3: Verify Replit project access before cloning.
-// If the project is inaccessible and no token was provided, throw a clear
-// user-facing error that directs them to add their Replit token.
 async function cloneFromReplit(migration, creds, ctx) {
   const token = creds.replit || ctx.replitToken || null;
 
-  // Attempt access verification before any heavy work.
   try {
     const replit = new ReplitService(token);
-    await replit.getUser(); // throws if token is missing or invalid
+    await replit.getUser();
     const { username: parsedUser, slug } = replit.parseReplUrl(migration.repourl);
 
-    // Verify the specific repl is reachable.
     const user     = await replit.getUser();
     const username = parsedUser || user.username;
-    await replit.getReplInfo(username, slug); // throws 403/404 if private + no token
+    await replit.getReplInfo(username, slug);
 
     const replInfo = await replit.getReplInfo(username, slug);
     const files    = await replit.readFiles(username, slug);
@@ -204,8 +224,6 @@ async function cloneFromReplit(migration, creds, ctx) {
       },
     };
   } catch (err) {
-    // If the error looks like an access/auth failure and no token was supplied,
-    // surface a friendly, actionable message to the user.
     const isAccessError =
       err.message?.toLowerCase().includes('403') ||
       err.message?.toLowerCase().includes('401') ||
@@ -221,8 +239,6 @@ async function cloneFromReplit(migration, creds, ctx) {
         'If it is private please add your Replit token in the setup step.'
       );
     }
-
-    // Re-throw the original error for any other failure (network issues, etc.)
     throw err;
   }
 }
@@ -296,7 +312,7 @@ async function runMigration(migration, job, io) {
         .maybeSingle();
 
       if (credRow) {
-        const parsed     = JSON.parse(decrypt(credRow.encrypted_data));
+        const parsed       = JSON.parse(decrypt(credRow.encrypted_data));
         const anthropicKey = parsed.token || parsed.anthropicKey || '';
         if (anthropicKey) {
           agent = new MigrationAgent(anthropicKey, io, migrationId);
@@ -311,8 +327,23 @@ async function runMigration(migration, job, io) {
 
     const logFn = (level, msg) => log(io, ctx, level, msg);
 
+    // ── Fix 5: DB safety check ────────────────────────────────────────────────────
+    // If the user selected Supabase but no database is detected in the codebase,
+    // skip the Supabase step entirely and tell the user plainly.
+    let activePlatforms = [...migration.platforms];
+    if (activePlatforms.includes('supabase') && !projectHasDatabase(analysis)) {
+      await log(io, ctx, 'info',
+        'ℹ️ We did not find a database in your project so we skipped that step.');
+      broadcast(io, migrationId, {
+        type:    'task-skipped',
+        taskId:  'supabase',
+        reason:  'No database detected in the project.',
+      });
+      activePlatforms = activePlatforms.filter(p => p !== 'supabase');
+    }
+
     // ── Step 2: Supabase ─────────────────────────────────────────────────────────────
-    if (migration.platforms.includes('supabase')) {
+    if (activePlatforms.includes('supabase')) {
       broadcast(io, migrationId, { type: 'task-start', taskId: 'supabase', title: 'Creating Supabase project' });
       await log(io, ctx, 'info', 'Step 2/5 — Creating Supabase project');
 
@@ -350,7 +381,7 @@ async function runMigration(migration, job, io) {
     ctx.envVars = buildEnvVars(analysis, ctx);
 
     // ── Step 3: Railway ─────────────────────────────────────────────────────────────
-    if (migration.platforms.includes('railway')) {
+    if (activePlatforms.includes('railway')) {
       broadcast(io, migrationId, { type: 'task-start', taskId: 'railway', title: 'Deploying backend to Railway' });
       await log(io, ctx, 'info', 'Step 3/5 — Deploying backend to Railway');
 
@@ -393,7 +424,7 @@ async function runMigration(migration, job, io) {
     if (job) await job.progress(65);
 
     // ── Step 4: Vercel ─────────────────────────────────────────────────────────────
-    if (migration.platforms.includes('vercel')) {
+    if (activePlatforms.includes('vercel')) {
       broadcast(io, migrationId, { type: 'task-start', taskId: 'vercel', title: 'Deploying frontend to Vercel' });
       await log(io, ctx, 'info', 'Step 4/5 — Deploying frontend to Vercel');
 
