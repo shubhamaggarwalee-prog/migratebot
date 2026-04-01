@@ -5,9 +5,9 @@
  *  1. sanitizeErrors   — global error handler (replaces the inline one in server.js)
  *                        Strips stack traces, raw DB/Supabase/Stripe messages,
  *                        and any credential values from responses sent to clients.
- *  2. sanitizeLogs     — request-body scrubber. Wraps logger calls so that
+ *  2. sanitizeLogs     — request-body scrubber. Mutates req.body in place so that
  *                        sensitive fields (tokens, keys, passwords) never appear
- *                        in server logs even when the body is logged for debugging.
+ *                        in morgan or any other logging middleware.
  */
 
 const logger = require('../utils/logger');
@@ -124,15 +124,13 @@ function sanitizeErrors(err, req, res, next) {
 
 /**
  * Request-body log scrubber.
- * Attach early in the middleware chain. Replaces req.body's sensitive
- * field values in-memory before any logging middleware can read them.
- *
- * NOTE: This does NOT modify req.body values used by route handlers —
- * it only scrubs a clone stored on req._scrubbedBody for log use.
+ * Attach early in the middleware chain (before morgan/body-logging).
+ * Mutates req.body in place so morgan and all downstream middleware
+ * automatically see the scrubbed version — tokens never appear in logs.
  */
 function sanitizeLogs(req, res, next) {
   if (req.body && typeof req.body === 'object') {
-    req._scrubbedBody = scrub(req.body);
+    req.body = scrub(req.body);   // ← Fix 4b: mutate in place, not a clone
   }
   next();
 }
