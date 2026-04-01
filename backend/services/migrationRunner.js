@@ -30,12 +30,11 @@ const MigrationAgent   = require('./migrationAgent');
 const { decrypt }      = require('../utils/encryption');
 const logger           = require('../utils/logger');
 
-// Broadcast progress to all sockets subscribed to a migration room.
 function broadcast(io, migrationId, payload) {
   if (io) io.to(`migration:${migrationId}`).emit('migration:progress', payload);
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function log(io, ctx, level, message) {
   const safeLevel = ['info', 'warn', 'error', 'success'].includes(level) ? level : 'info';
@@ -46,7 +45,7 @@ async function log(io, ctx, level, message) {
       message,
       timestamp: new Date().toISOString()
     }]);
-  } catch (_) { /* non-fatal */ }
+  } catch (_) {}
   broadcast(io, ctx.migrationId, { type: 'log', level: safeLevel, message, timestamp: Date.now() });
   logger[level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'info'](
     `[${ctx.migrationId.slice(0, 8)}] ${message}`
@@ -139,7 +138,7 @@ async function runHealthChecks({ frontend, backend, database }) {
   return results;
 }
 
-// ─── Fix 5: Detect whether a project has a database ──────────────────────────────────────
+// ─── Fix 5: DB detection ──────────────────────────────────────────────────────
 
 const DB_DEPS = new Set([
   'pg', 'postgres', 'mysql', 'mysql2', 'mongoose', 'mongodb',
@@ -148,52 +147,21 @@ const DB_DEPS = new Set([
 ]);
 
 function projectHasDatabase(analysis) {
-  if (analysis.databaseSchema)  return true;
-  if (analysis.supabaseSchema)  return true;
-  if (analysis.databaseType)    return true;
-  if (analysis.hasDatabase)     return true;
+  if (analysis.databaseSchema) return true;
+  if (analysis.supabaseSchema) return true;
+  if (analysis.databaseType)   return true;
+  if (analysis.hasDatabase)    return true;
 
   const deps = {
-    ...(analysis.dependencies        || {}),
-    ...(analysis.devDependencies     || {}),
-    ...(analysis.peerDependencies    || {}),
+    ...(analysis.dependencies     || {}),
+    ...(analysis.devDependencies  || {}),
+    ...(analysis.peerDependencies || {}),
   };
   return Object.keys(deps).some(dep => DB_DEPS.has(dep));
 }
 
-// ─── Task 19: Agent step wrapper ─────────────────────────────────────────────────────────────
+// ─── Fix 6: Step failure helpers ─────────────────────────────────────────────
 
-async function runStepWithAgentRetry(stepFn, stepName, agent, context, logFn) {
-  try {
-    return await stepFn();
-  } catch (firstErr) {
-    await logFn('warn', `⚠️ ${stepName} step failed — asking MigrationAgent for a fix…`);
-
-    let fix;
-    try {
-      fix = await agent.autoFix(firstErr.message, stepName, context);
-    } catch (agentErr) {
-      logger.warn(`MigrationAgent.autoFix threw: ${agentErr.message}`);
-      throw firstErr;
-    }
-
-    if (fix.action === 'fix') {
-      await logFn('info', `🧠 Agent applied a patch — retrying ${stepName}…`);
-      return await stepFn();
-    }
-
-    throw new Error(
-      `Migration paused at ${stepName} step — agent needs user input. ` +
-      `Check the deployment page to continue.`
-    );
-  }
-}
-
-// ─── Fix 6: Broadcast a retryable step failure ────────────────────────────────────────────
-
-/**
- * Maps a raw step error to a plain-English user message.
- */
 function stepFailureMessage(stepName, err) {
   const m = (err.message || '').toLowerCase();
 
@@ -222,33 +190,56 @@ function stepFailureMessage(stepName, err) {
   return `The ${stepName} step failed. Please retry it from the deployment page.`;
 }
 
-/**
- * Records a step failure in the DB, broadcasts a plain-English explanation
- * and a retry-step event so the frontend can show a retry button.
- */
 async function recordStepFailure(io, ctx, stepName, err) {
   const userMessage = stepFailureMessage(stepName, err);
 
-  await log(io, ctx.migrationId, { type: 'log', level: 'error', message: `❌ ${userMessage}` });
+  await log(io, ctx, 'error', `❌ ${userMessage}`);
 
-  // Store the failed step so the frontend knows what to offer a retry for
   try {
     await supabaseAdmin.from('migrations').update({
       failed_step:   stepName,
       error_message: userMessage,
       updated_at:    new Date().toISOString(),
     }).eq('id', ctx.migrationId);
-  } catch (_) { /* non-fatal */ }
+  } catch (_) {}
 
   broadcast(io, ctx.migrationId, {
-    type:        'step-failed',
+    type:      'step-failed',
     stepName,
-    message:     userMessage,
-    retryable:   true,
+    message:   userMessage,
+    retryable: true,
   });
 }
 
-// ─── Source adapters ─────────────────────────────────────────────────────────────────────────────
+// ─── Task 19: Agent step wrapper ──────────────────────────────────────────────
+
+async function runStepWithAgentRetry(stepFn, stepName, agent, context, logFn) {
+  try {
+    return await stepFn();
+  } catch (firstErr) {
+    await logFn('warn', `⚠️ ${stepName} step failed — asking MigrationAgent for a fix…`);
+
+    let fix;
+    try {
+      fix = await agent.autoFix(firstErr.message, stepName, context);
+    } catch (agentErr) {
+      logger.warn(`MigrationAgent.autoFix threw: ${agentErr.message}`);
+      throw firstErr;
+    }
+
+    if (fix.action === 'fix') {
+      await logFn('info', `🧠 Agent applied a patch — retrying ${stepName}…`);
+      return await stepFn();
+    }
+
+    throw new Error(
+      `Migration paused at ${stepName} step — agent needs user input. ` +
+      `Check the deployment page to continue.`
+    );
+  }
+}
+
+// ─── Source adapters ──────────────────────────────────────────────────────────
 
 async function cloneFromGitHub(migration, creds, ctx) {
   const github   = new GitHubService(creds.github);
@@ -265,11 +256,9 @@ async function cloneFromReplit(migration, creds, ctx) {
     const replit = new ReplitService(token);
     await replit.getUser();
     const { username: parsedUser, slug } = replit.parseReplUrl(migration.repourl);
-
     const user     = await replit.getUser();
     const username = parsedUser || user.username;
     await replit.getReplInfo(username, slug);
-
     const replInfo = await replit.getReplInfo(username, slug);
     const files    = await replit.readFiles(username, slug);
     ctx.replit = replit;
@@ -328,7 +317,7 @@ async function cloneSource(migration, creds, ctx) {
   }
 }
 
-// ─── Main orchestrator ────────────────────────────────────────────────────────────────────────
+// ─── Main orchestrator ────────────────────────────────────────────────────────
 
 async function runMigration(migration, job, io) {
   const { id: migrationId } = migration;
@@ -343,7 +332,7 @@ async function runMigration(migration, job, io) {
 
     ctx.creds = await loadCredentials(migration.user_id, migration.platforms, migration.source_platform);
 
-    // ── Step 1: Clone + AI Analysis ────────────────────────────────────────────────
+    // ── Step 1: Clone + AI Analysis ──────────────────────────────────────────
     await log(io, ctx, 'info', 'Step 1/5 — Cloning repository and running AI analysis');
     broadcast(io, migrationId, { type: 'task-start', taskId: 'analyze', title: 'AI codebase analysis' });
 
@@ -360,7 +349,7 @@ async function runMigration(migration, job, io) {
     broadcast(io, migrationId, { type: 'task-done', taskId: 'analyze', result: { framework: analysis.framework } });
     if (job) await job.progress(20);
 
-    // ── Task 19: MigrationAgent preScan ─────────────────────────────────────────
+    // ── Task 19: MigrationAgent preScan ─────────────────────────────────────
     let agent = null;
     try {
       const { data: credRow } = await supabaseAdmin
@@ -387,7 +376,7 @@ async function runMigration(migration, job, io) {
 
     const logFn = (level, msg) => log(io, ctx, level, msg);
 
-    // ── Fix 5: DB safety check ────────────────────────────────────────────────────
+    // ── Fix 5: DB safety check ────────────────────────────────────────────────
     let activePlatforms = [...migration.platforms];
     if (activePlatforms.includes('supabase') && !projectHasDatabase(analysis)) {
       await log(io, ctx, 'info',
@@ -400,12 +389,10 @@ async function runMigration(migration, job, io) {
       activePlatforms = activePlatforms.filter(p => p !== 'supabase');
     }
 
-    // ── Fix 6: Per-step failure tracking ─────────────────────────────────────────
-    // stepResults tracks which deployment steps succeeded / failed.
-    // A migration is only marked 'complete' if ALL attempted steps succeed.
-    const stepResults = {};   // { supabase: 'ok'|'failed', railway: 'ok'|'failed', vercel: 'ok'|'failed' }
+    // ── Fix 6: Per-step result tracking ──────────────────────────────────────
+    const stepResults = {};
 
-    // ── Step 2: Supabase ─────────────────────────────────────────────────────────────
+    // ── Step 2: Supabase ─────────────────────────────────────────────────────
     if (activePlatforms.includes('supabase')) {
       broadcast(io, migrationId, { type: 'task-start', taskId: 'supabase', title: 'Creating Supabase project' });
       await log(io, ctx, 'info', 'Step 2/5 — Creating Supabase project');
@@ -444,14 +431,13 @@ async function runMigration(migration, job, io) {
         stepResults.supabase = 'failed';
         await recordStepFailure(io, ctx, 'supabase', stepErr);
         logger.error(`Supabase step failed for ${migrationId}: ${stepErr.message}`);
-        // Continue — don't abort; other steps may still succeed
       }
     }
     if (job) await job.progress(40);
 
     ctx.envVars = buildEnvVars(analysis, ctx);
 
-    // ── Step 3: Railway ─────────────────────────────────────────────────────────────
+    // ── Step 3: Railway ──────────────────────────────────────────────────────
     if (activePlatforms.includes('railway')) {
       broadcast(io, migrationId, { type: 'task-start', taskId: 'railway', title: 'Deploying backend to Railway' });
       await log(io, ctx, 'info', 'Step 3/5 — Deploying backend to Railway');
@@ -468,8 +454,8 @@ async function runMigration(migration, job, io) {
           repoOwner = 'migratebot';
           repoName  = repoInfo.name;
           await log(io, ctx, 'warn',
-            'Non-GitHub source detected — Railway deploy requires a GitHub repo. '
-            + 'Auto-push to temp repo is a planned enhancement.');
+            'Non-GitHub source detected — Railway deploy requires a GitHub repo. ' +
+            'Auto-push to temp repo is a planned enhancement.');
         }
 
         const service = await railway.createGithubService(project.id, env.id, {
@@ -487,8 +473,7 @@ async function runMigration(migration, job, io) {
 
       try {
         if (agent) {
-          await runStepWithAgentRetry(railwayStepFn, 'railway', agent,
-            { repoUrl: migration.repourl }, logFn);
+          await runStepWithAgentRetry(railwayStepFn, 'railway', agent, { repoUrl: migration.repourl }, logFn);
         } else {
           await railwayStepFn();
         }
@@ -497,12 +482,11 @@ async function runMigration(migration, job, io) {
         stepResults.railway = 'failed';
         await recordStepFailure(io, ctx, 'railway', stepErr);
         logger.error(`Railway step failed for ${migrationId}: ${stepErr.message}`);
-        // Continue — Vercel can still deploy even if Railway failed
       }
     }
     if (job) await job.progress(65);
 
-    // ── Step 4: Vercel ─────────────────────────────────────────────────────────────
+    // ── Step 4: Vercel ───────────────────────────────────────────────────────
     if (activePlatforms.includes('vercel')) {
       broadcast(io, migrationId, { type: 'task-start', taskId: 'vercel', title: 'Deploying frontend to Vercel' });
       await log(io, ctx, 'info', 'Step 4/5 — Deploying frontend to Vercel');
@@ -544,8 +528,7 @@ async function runMigration(migration, job, io) {
 
       try {
         if (agent) {
-          await runStepWithAgentRetry(vercelStepFn, 'vercel', agent,
-            { framework: analysis.framework }, logFn);
+          await runStepWithAgentRetry(vercelStepFn, 'vercel', agent, { framework: analysis.framework }, logFn);
         } else {
           await vercelStepFn();
         }
@@ -558,7 +541,7 @@ async function runMigration(migration, job, io) {
     }
     if (job) await job.progress(85);
 
-    // ── Step 5: Health checks ───────────────────────────────────────────────────────────
+    // ── Step 5: Health checks ────────────────────────────────────────────────
     broadcast(io, migrationId, { type: 'task-start', taskId: 'health', title: 'Running health checks' });
     await log(io, ctx, 'info', 'Step 5/5 — Running health checks');
     const healthResults = await runHealthChecks({
@@ -570,7 +553,7 @@ async function runMigration(migration, job, io) {
     await log(io, ctx, allHealthy ? 'success' : 'warn', `Health checks: ${JSON.stringify(healthResults)}`);
     broadcast(io, migrationId, { type: 'task-done', taskId: 'health', result: healthResults });
 
-    // ── Fix 6: Determine final status based on per-step results ──────────────────
+    // ── Fix 6: Final status based on per-step results ────────────────────────
     const failedSteps = Object.entries(stepResults)
       .filter(([, result]) => result === 'failed')
       .map(([step]) => step);
@@ -582,11 +565,10 @@ async function runMigration(migration, job, io) {
     };
 
     if (failedSteps.length > 0) {
-      // Some steps failed — mark as partial_failure, not complete
       await updateStatus(io, ctx, 'partial_failure', {
-        deployed_urls:  deployedUrls,
-        failed_step:    failedSteps.join(', '),
-        completed_at:   new Date().toISOString(),
+        deployed_urls:    deployedUrls,
+        failed_step:      failedSteps.join(', '),
+        completed_at:     new Date().toISOString(),
         duration_seconds: Math.floor((Date.now() - new Date(migration.created_at).getTime()) / 1000),
       });
 
@@ -602,7 +584,6 @@ async function runMigration(migration, job, io) {
         failedSteps,
       });
     } else {
-      // All steps succeeded
       await updateStatus(io, ctx, 'complete', {
         deployed_urls:    deployedUrls,
         completed_at:     new Date().toISOString(),
@@ -614,21 +595,15 @@ async function runMigration(migration, job, io) {
 
     if (job) await job.progress(100);
 
-    // ── Fire-and-forget success/partial email (Task 17) ──────────────────────────
+    // ── Fire-and-forget email (Task 17) ──────────────────────────────────────
     try {
       const { data: authData } = await supabaseAdmin.auth.admin.getUserById(migration.user_id);
       const userEmail = authData?.user?.email;
       const userName  = authData?.user?.user_metadata?.name || authData?.user?.user_metadata?.full_name || '';
       if (userEmail) {
-        await sendMigrationComplete(
-          userEmail,
-          repoInfo.name,
-          deployedUrls,
-          migrationId,
-          userName,
-        );
+        await sendMigrationComplete(userEmail, repoInfo.name, deployedUrls, migrationId, userName);
       }
-    } catch (_) { /* email failure must never break migration */ }
+    } catch (_) {}
 
   } catch (err) {
     logger.error(`Migration ${migrationId} failed: ${err.message}`, err.stack);
@@ -639,7 +614,6 @@ async function runMigration(migration, job, io) {
     });
     broadcast(io, migrationId, { type: 'error', status: 'failed', error: err.message });
 
-    // Auto-refund on hard failure (not partial)
     if (ctx.migration?.stripe_payment_intent_id) {
       try {
         const stripe = new StripeService();
@@ -652,7 +626,6 @@ async function runMigration(migration, job, io) {
       }
     }
 
-    // ── Fire-and-forget failure email (Task 17) ──────────────────────────────────────
     try {
       const { data: authData } = await supabaseAdmin.auth.admin.getUserById(migration.user_id);
       const userEmail = authData?.user?.email;
@@ -666,7 +639,7 @@ async function runMigration(migration, job, io) {
           userName,
         );
       }
-    } catch (_) { /* ignore */ }
+    } catch (_) {}
 
     throw err;
   }
