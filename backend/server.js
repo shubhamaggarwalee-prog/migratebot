@@ -70,9 +70,12 @@ if (process.env.NODE_ENV === 'production') {
 // ─── Log sanitizer — scrub sensitive fields from req.body before any logging ─
 app.use(sanitizeLogs);
 
-// ─── Raw body for Stripe webhooks (must come before express.json) ────────────
+// ─── Raw body for Stripe webhooks (MUST come before express.json) ─────────────
+// Route must exactly match the path registered in app.use('/api/webhooks', ...).
+// Stripe's constructEvent() requires the original raw Buffer — if express.json()
+// runs first it parses the body into an object and the HMAC signature check fails.
 app.use(
-  '/api/billing/webhook',
+  '/api/webhooks/stripe',
   express.raw({ type: 'application/json' }),
 );
 
