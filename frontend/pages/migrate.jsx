@@ -145,6 +145,17 @@ function GithubPatGuide({ value, onChange }) {
 // Max ZIP size accepted before we even touch JSZip (bytes).
 const ZIP_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
+// fix #2: extensions we treat as binary — read as base64 rather than UTF-8 string
+const BINARY_EXTENSIONS = new Set([
+  'png','jpg','jpeg','gif','webp','svg','ico','bmp','tiff',
+  'pdf','zip','gz','tar','woff','woff2','ttf','eot','otf',
+  'mp4','mp3','wav','ogg','webm','mov',
+]);
+function isBinary(filePath) {
+  const ext = filePath.split('.').pop().toLowerCase();
+  return BINARY_EXTENSIONS.has(ext);
+}
+
 function StepSource({ onNext }) {
   const { repoUrl, setRepoUrl, branch, setBranch } = useWizardStore();
   const [source, setSource]       = useState('github');
@@ -155,7 +166,7 @@ function StepSource({ onNext }) {
   const [uploadMode,   setUploadMode]   = useState('paste');   // 'paste' | 'zip'
   const [pasteFile,    setPasteFile]    = useState('');         // filename
   const [pasteContent, setPasteContent] = useState('');         // code content
-  const [zipFiles,     setZipFiles]     = useState([]);         // [{ path, content }]
+  const [zipFiles,     setZipFiles]     = useState([]);         // [{ path, content, encoding? }]
   const [zipName,      setZipName]      = useState('');
   const [appName,      setAppName]      = useState('');
   const [githubPat,    setGithubPat]    = useState('');
@@ -230,10 +241,19 @@ function StepSource({ onNext }) {
           relativePath.startsWith('.')
         ) return;
 
+        // fix #1: handle both foldered ZIPs (my-app/src/index.js → src/index.js)
+        // and flat ZIPs (index.js → index.js). Old regex silently dropped flat files.
+        const cleanPath = relativePath.includes('/')
+          ? relativePath.replace(/^[^/]+\//, '')
+          : relativePath;
+        if (!cleanPath) return;
+
+        // fix #2: binary files must be read as base64, not UTF-8 string, to avoid
+        // mojibake corruption. Flag them so the backend can handle encoding correctly.
+        const binary = isBinary(cleanPath);
         promises.push(
-          zipEntry.async('string').then(content => {
-            const cleanPath = relativePath.replace(/^[^/]+\//, '');
-            if (cleanPath) extracted.push({ path: cleanPath, content });
+          zipEntry.async(binary ? 'base64' : 'string').then(content => {
+            extracted.push({ path: cleanPath, content, ...(binary ? { encoding: 'base64' } : {}) });
           })
         );
       });
@@ -251,6 +271,7 @@ function StepSource({ onNext }) {
   };
 
   // ── Upload to backend → create GitHub repo ──────────────────────────────
+  // Note: githubToken is sent over HTTPS only (Railway enforces TLS). Never logged by backend.
   const handleUploadAndContinue = async () => {
     setError('');
     if (!githubPat.trim()) { setError('Please paste your GitHub token first. Click "How do I get this?" above for help.'); return; }
@@ -260,6 +281,11 @@ function StepSource({ onNext }) {
     if (uploadMode === 'paste') {
       if (!pasteFile.trim())    { setError('Please enter a filename (e.g. index.html or App.jsx).'); return; }
       if (!pasteContent.trim()) { setError('Please paste your code in the box above.'); return; }
+      // fix #4: guard against paste content exceeding the backend's 500 KB per-file limit
+      if (pasteContent.length > 500_000) {
+        setError('Pasted code is too large (max 500 KB). Please upload a ZIP file instead.');
+        return;
+      }
       files = [{ path: pasteFile.trim(), content: pasteContent }];
     } else {
       if (!zipFiles.length) { setError('Please upload a ZIP file first.'); return; }
@@ -282,6 +308,9 @@ function StepSource({ onNext }) {
       setRepoUrl(data.repoUrl);
       setUploadDone(true);
       setUploadMsg(data.message);
+      // fix #5: clear PAT from component state after successful upload — no reason
+      // to keep it in memory once the repo has been created
+      setGithubPat('');
     } catch (e) {
       setError(e.message);
     } finally {
@@ -315,6 +344,8 @@ function StepSource({ onNext }) {
             setSource(s.id);
             setError('');
             setUploadDone(false);
+            // fix #9: also clear stale success message when switching sources
+            setUploadMsg('');
             // fix: clear repoUrl when switching sources so a stale URL from a
             // previous selection can never leak into the next deployment step
             setRepoUrl('');
@@ -382,6 +413,7 @@ function StepSource({ onNext }) {
         fix: the hidden file <input> is rendered at this level — outside the
         uploadMode === 'zip' conditional — so fileInputRef.current is always
         a real DOM node by the time the drop-zone's onClick fires.
+        fix #8: accept=".zip" validated (confirmed present).
       */}
       <input
         ref={fileInputRef}
@@ -426,26 +458,36 @@ function StepSource({ onNext }) {
                   { id: 'paste', icon: '📋', label: 'Paste code', sub: 'From Claude or anywhere' },
                   { id: 'zip',   icon: '📦', label: 'Upload a ZIP', sub: 'Your whole project folder' },
                 ].map(m => (
-                  <button key={m.id} type="button" onClick={() => {
-                    setUploadMode(m.id);
-                    setError('');
-                    setUploadDone(false);
-                    // fix: clear the OTHER mode's stale data so it can never be
-                    // submitted accidentally after toggling back and forth
-                    if (m.id === 'zip') {
-                      setPasteFile('');
-                      setPasteContent('');
-                    } else {
-                      setZipFiles([]);
-                      setZipName('');
-                    }
-                  }} style={{
-                    flex: 1, padding: '10px 8px',
-                    background: uploadMode === m.id ? C.amberBg : C.surface,
-                    border: `1.5px solid ${uploadMode === m.id ? C.amber : C.border}`,
-                    borderRadius: 10, cursor: 'pointer', textAlign: 'center',
-                    transition: 'all .15s',
-                  }}>
+                  <button
+                    key={m.id}
+                    type="button"
+                    // fix #7: aria-pressed communicates selected state to screen readers
+                    aria-pressed={uploadMode === m.id}
+                    onClick={() => {
+                      setUploadMode(m.id);
+                      setError('');
+                      // fix #3: reset both uploadDone AND uploadMsg so the success
+                      // banner never bleeds through after toggling modes
+                      setUploadDone(false);
+                      setUploadMsg('');
+                      // fix: clear the OTHER mode's stale data so it can never be
+                      // submitted accidentally after toggling back and forth
+                      if (m.id === 'zip') {
+                        setPasteFile('');
+                        setPasteContent('');
+                      } else {
+                        setZipFiles([]);
+                        setZipName('');
+                      }
+                    }}
+                    style={{
+                      flex: 1, padding: '10px 8px',
+                      background: uploadMode === m.id ? C.amberBg : C.surface,
+                      border: `1.5px solid ${uploadMode === m.id ? C.amber : C.border}`,
+                      borderRadius: 10, cursor: 'pointer', textAlign: 'center',
+                      transition: 'all .15s',
+                    }}
+                  >
                     <div style={{ fontSize: 20, marginBottom: 3 }}>{m.icon}</div>
                     <div style={{ fontSize: 12, fontWeight: uploadMode === m.id ? 700 : 500, color: uploadMode === m.id ? C.amberDark : C.inkMid }}>{m.label}</div>
                     <div style={{ fontSize: 10, color: C.inkLight, marginTop: 1 }}>{m.sub}</div>
