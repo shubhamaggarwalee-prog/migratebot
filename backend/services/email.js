@@ -16,11 +16,15 @@
  *         starting" email sent by the webhook safety timer. Replaced the
  *         incorrect sendMigrationComplete call in webhooks.js (which was sending
  *         a "Your app is live!" message before deployment even started).
+ *
+ * Item 10: Added List-Unsubscribe + List-Unsubscribe-Post headers to every
+ *          outbound email. Required by Gmail (Feb 2024) and Yahoo for bulk/
+ *          transactional senders — omitting them causes spam filtering.
  */
 const nodemailer = require('nodemailer');
 
 const transport = nodemailer.createTransport({
-  host  : process.env.SMTP_HOST   || 'smtp.postmarkapp.com',
+  host  : process.env.SMTP_HOST   || 'smtp.sendgrid.net',
   port  : parseInt(process.env.SMTP_PORT || '587', 10),
   auth  : {
     user: process.env.SMTP_USER   || '',
@@ -31,6 +35,11 @@ const transport = nodemailer.createTransport({
 
 const FROM         = process.env.EMAIL_FROM    || 'MigrateBot <hello@migratebot.io>';
 const FRONTEND_URL = process.env.FRONTEND_URL  || 'https://migratebot.io';
+
+// One-click unsubscribe endpoint — resolves to a GET that marks the user
+// as opted out of non-critical emails. RFC 8058 requires both mailto: and
+// https: forms; Gmail uses the https: form for its one-click button.
+const UNSUBSCRIBE_URL = `${FRONTEND_URL}/unsubscribe`;
 
 // ─── shared base template ──────────────────────────────────────────────────────
 
@@ -91,6 +100,7 @@ function baseHtml(title, bodyHtml) {
     <div class="foot">
       MigrateBot · <a href="mailto:support@migratebot.io">support@migratebot.io</a><br />
       You're receiving this because you have a migration with us.
+      <a href="${UNSUBSCRIBE_URL}">Unsubscribe</a>
     </div>
   </div>
 </body>
@@ -98,9 +108,25 @@ function baseHtml(title, bodyHtml) {
 }
 
 // ─── internal send helper ──────────────────────────────────────────────────────
+//
+// List-Unsubscribe (RFC 2369 + RFC 8058):
+//   <mailto:unsubscribe@migratebot.io> — traditional mailto unsubscribe
+//   <https://…/unsubscribe>            — one-click URL unsubscribe (Gmail button)
+// List-Unsubscribe-Post:
+//   Required by Gmail for the one-click unsubscribe button to appear.
+//   When clicked, Gmail POSTs "List-Unsubscribe=One-Click" to the URL above.
 
 async function send({ to, subject, html }) {
-  await transport.sendMail({ from: FROM, to, subject, html });
+  await transport.sendMail({
+    from   : FROM,
+    to,
+    subject,
+    html,
+    headers: {
+      'List-Unsubscribe'     : `<mailto:unsubscribe@migratebot.io?subject=unsubscribe>, <${UNSUBSCRIBE_URL}>`,
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    },
+  });
   return { success: true };
 }
 
@@ -239,11 +265,11 @@ async function sendMigrationComplete(to, repoName, deployedUrls = {}, migrationI
       </div>
       <div class="step">
         <div class="step-num">3</div>
-        <div class="step-text"><strong>Add a custom domain</strong> (optional) — in your Vercel dashboard under “Domains” you can attach your own domain name like <em>myapp.com</em>.</div>
+        <div class="step-text"><strong>Add a custom domain</strong> (optional) — in your Vercel dashboard under "Domains" you can attach your own domain name like <em>myapp.com</em>.</div>
       </div>
       <div class="step">
         <div class="step-num">4</div>
-        <div class="step-text"><strong>Make changes?</strong> Use the “Push a Change” button on your dashboard to redeploy without touching any code.</div>
+        <div class="step-text"><strong>Make changes?</strong> Use the "Push a Change" button on your dashboard to redeploy without touching any code.</div>
       </div>
     </div>
 
