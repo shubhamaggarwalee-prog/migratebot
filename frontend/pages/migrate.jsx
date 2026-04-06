@@ -8,6 +8,9 @@
  * Task 9:  Upload handler now detects HTTP 401 (expired JWT) and redirects
  *          to /login?reason=session_expired instead of showing a cryptic
  *          "Upload failed" error with no recovery path.
+ * Task 10: GithubPatGuide token validation now requires a ghp_ or github_pat_
+ *          prefix instead of length > 10, so "✓ Token looks good" is only
+ *          shown for strings that actually look like a GitHub PAT.
  */
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
@@ -70,9 +73,17 @@ function InfoBox({ icon = 'ℹ', color = C.blue, bg = C.blueBg, children }) {
 }
 
 // ─── GitHub PAT mini-guide (used inside the paste/zip source panel) ───────────
+// Task 10: A valid GitHub PAT must start with "ghp_" (classic token) or
+// "github_pat_" (fine-grained token). Anything else — even a long string —
+// is almost certainly not a real token, so we withhold the "✓ Token looks good"
+// confirmation until the prefix matches.
+function isValidGithubPat(value) {
+  return value.startsWith('ghp_') || value.startsWith('github_pat_');
+}
+
 function GithubPatGuide({ value, onChange }) {
   const [open, setOpen] = useState(false);
-  const saved = value && value.length > 10;
+  const saved = isValidGithubPat(value);
   return (
     <div style={{ marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
