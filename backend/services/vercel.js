@@ -7,6 +7,9 @@
  * until READY, and domain management.
  *
  * API reference: https://vercel.com/docs/rest-api
+ *
+ * Fix 7: Added getUser() — called by credentials.js /validate to confirm
+ *        a token is valid and return account metadata to the frontend.
  */
 
 const axios = require('axios');
@@ -66,6 +69,26 @@ class VercelService {
   }
 
   // ─── TOKEN VALIDATION ─────────────────────────────────────────────────────
+
+  /**
+   * Fetch the authenticated Vercel user.
+   * Used by credentials.js /validate to confirm a token works and
+   * return account metadata (username, email) to the frontend.
+   *
+   * @returns {{ username: string, email: string, name: string, id: string }}
+   * @throws Error if the token is invalid or the request fails
+   */
+  async getUser() {
+    const data = await this._request('GET', '/v2/user');
+    const u = data?.user;
+    if (!u) throw new Error('Vercel token is invalid or lacks user read access');
+    return {
+      id:       u.id,
+      username: u.username,
+      name:     u.name     || u.username,
+      email:    u.email    || '',
+    };
+  }
 
   /**
    * Verify the token is valid by fetching the authed user.

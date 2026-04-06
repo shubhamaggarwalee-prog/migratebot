@@ -5,6 +5,9 @@
  * Handles project creation, environment management, GitHub service linking,
  * environment variable injection, deployment triggering, status polling,
  * and domain generation — all via Railway's GraphQL v2 API.
+ *
+ * Fix 7: Added getUser() — called by credentials.js /validate to confirm
+ *        a token works and return account metadata to the frontend.
  */
 
 const axios = require('axios');
@@ -42,6 +45,48 @@ class RailwayService {
         );
       }
       throw err;
+    }
+  }
+
+  // ─── TOKEN VALIDATION ──────────────────────────────────────────────────────
+
+  /**
+   * Fetch the authenticated Railway user.
+   * Used by credentials.js /validate to confirm a token works and
+   * return account metadata (name, email) to the frontend.
+   *
+   * @returns {{ id: string, name: string, email: string }}
+   * @throws Error if the token is invalid or the request fails
+   */
+  async getUser() {
+    const data = await this.graphql(`
+      query {
+        me {
+          id
+          name
+          email
+        }
+      }
+    `);
+    const u = data?.me;
+    if (!u) throw new Error('Railway token is invalid or lacks user read access');
+    return {
+      id:    u.id,
+      name:  u.name  || '',
+      email: u.email || '',
+    };
+  }
+
+  /**
+   * Validate that the stored token is accepted by Railway.
+   * @returns {boolean}
+   */
+  async validateToken() {
+    try {
+      const data = await this.graphql(`query { me { id } }`);
+      return !!data?.me?.id;
+    } catch {
+      return false;
     }
   }
 
@@ -380,21 +425,6 @@ class RailwayService {
       { serviceId, environmentId, domain: customDomain }
     );
     return data.customDomainCreate;
-  }
-
-  // ─── TOKEN VALIDATION ───────────────────────────────────────────────────────
-
-  /**
-   * Validate that the stored token is accepted by Railway.
-   * @returns {boolean}
-   */
-  async validateToken() {
-    try {
-      const data = await this.graphql(`query { me { id } }`);
-      return !!data?.me?.id;
-    } catch {
-      return false;
-    }
   }
 
   // ─── UTILS ──────────────────────────────────────────────────────────────────
