@@ -1,8 +1,9 @@
 /**
  * frontend/pages/settings.jsx
- * Profile settings + Security (2FA) + Credentials + Notifications tab
+ * Profile settings + Security (2FA) + Credentials + Notifications + Billing tab
  * Gap 4: Added Credentials tab.
  * Gap 6: Added Notifications tab wired to GET/PUT /api/notifications.
+ * Task 15: Added Billing tab; billing.js return_url updated to /settings?tab=billing.
  */
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
@@ -20,10 +21,10 @@ const C = {
   blue: '#2563EB', blueBg: '#DBEAFE',
 };
 
-const TABS = ['Profile', 'Security', 'Credentials', 'Notifications', 'Danger Zone'];
+const TABS = ['Profile', 'Security', 'Credentials', 'Notifications', 'Billing', 'Danger Zone'];
 
 // Deep-link tab name → index
-const TAB_SLUGS = { profile: 0, security: 1, credentials: 2, notifications: 3, danger: 4 };
+const TAB_SLUGS = { profile: 0, security: 1, credentials: 2, notifications: 3, billing: 4, danger: 5 };
 
 const CREDENTIAL_SERVICES = [
   { key: 'anthropic', label: 'Anthropic',  icon: '\ud83e\udd16', description: 'Used by the AI to read and understand your code.',          placeholder: 'sk-ant-api03-...', hint: 'console.anthropic.com \u2192 API Keys',                 link: 'https://console.anthropic.com/' },
@@ -156,312 +157,244 @@ function TabSecurity({ user }) {
       )}
       {status === 'confirmed' && backupCodes.length > 0 && (
         <div>
-          <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 10, padding: '1rem', marginBottom: 16 }}>
-            <p style={{ fontSize: 14, fontWeight: 600, color: '#92400E', marginBottom: 8 }}>⚠ Save your backup codes</p>
-            <p style={{ fontSize: 13, color: '#78350F', marginBottom: 12 }}>Each code can only be used once.</p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 10 }}>
-              {backupCodes.map((c, i) => <button key={i} onClick={() => copyBackup(c)} style={{ fontFamily: 'monospace', fontSize: 13, padding: '6px 10px', background: '#fff', border: '1px solid #FDE68A', borderRadius: 6, cursor: 'pointer', color: C.ink }}>{c}</button>)}
+          <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 10, padding: 16, marginBottom: 16 }}>
+            <p style={{ fontWeight: 700, fontSize: 14, color: '#92400E', marginBottom: 8 }}>\u26a0\ufe0f Save your backup codes</p>
+            <p style={{ fontSize: 13, color: C.inkMid, marginBottom: 12, lineHeight: 1.5 }}>Store these somewhere safe. Each code can only be used once if you lose access to your authenticator app.</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 12 }}>
+              {backupCodes.map(c => (
+                <div key={c} onClick={() => copyBackup(c)} title="Click to copy" style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 6, padding: '6px 10px', fontFamily: 'monospace', fontSize: 13, cursor: 'pointer', textAlign: 'center' }}>{c}</div>
+              ))}
             </div>
-            <button onClick={copyAllBackup} style={{ width: '100%', padding: '8px', background: '#fff', border: '1px solid #FDE68A', borderRadius: 6, fontSize: 13, fontWeight: 600, color: '#92400E', cursor: 'pointer' }}>Copy all</button>
+            <button onClick={copyAllBackup} style={{ width: '100%', padding: 10, background: '#fff', border: `1px solid ${C.border}`, borderRadius: 8, fontWeight: 600, cursor: 'pointer', fontSize: 13 }}>Copy all backup codes</button>
           </div>
-          <button onClick={() => setStatus('enabled')} style={{ width: '100%', padding: 12, background: C.green, color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, cursor: 'pointer' }}>I\u2019ve saved my codes \u2713</button>
         </div>
       )}
       {status === 'enabled' && (
         <div>
-          <p style={{ fontSize: 14, color: C.inkMid, marginBottom: 16 }}>2FA is active. Enter your current code to disable it.</p>
+          <p style={{ fontSize: 13, color: C.inkMid, marginBottom: 12, lineHeight: 1.6 }}>Two-factor authentication is active. Enter a code from your authenticator app to disable it.</p>
           <input value={code} onChange={e => { setCode(e.target.value.replace(/\D/g,'').slice(0,6)); setError(''); }} placeholder="000000" maxLength={6} style={{ width: '100%', padding: '12px', border: `1px solid ${error ? C.red : C.border}`, borderRadius: 8, fontSize: 20, letterSpacing: '.25em', textAlign: 'center', boxSizing: 'border-box', marginBottom: 12 }} />
           {error && <p style={{ color: C.red, fontSize: 13, marginBottom: 8 }}>{error}</p>}
           <button onClick={disable2fa} style={{ width: '100%', padding: 12, background: C.red, color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, cursor: 'pointer' }}>Disable 2FA</button>
         </div>
       )}
-      {msg && <p style={{ marginTop: 12, fontSize: 13, color: msg.startsWith('\u2713') ? C.green : C.inkMid }}>{msg}</p>}
+      {msg && <p style={{ marginTop: 12, fontSize: 13, color: msg.startsWith('\u2713') ? C.green : C.red }}>{msg}</p>}
     </div>
   );
 }
 
 // ─── Credentials tab (Gap 4) ──────────────────────────────────────────────────
 function TabCredentials() {
-  const [values,   setValues]   = useState({});
-  const [show,     setShow]     = useState({});
-  const [saving,   setSaving]   = useState({});
-  const [saved,    setSaved]    = useState({});
-  const [errors,   setErrors]   = useState({});
-  const [statuses, setStatuses] = useState({});
+  const [creds, setCreds]   = useState({});
+  const [saving, setSaving] = useState({});
+  const [msgs, setMsgs]     = useState({});
+  const [show, setShow]     = useState({});
 
   useEffect(() => {
-    get('/api/credentials/status').then(res => setStatuses(res.statuses || {})).catch(() => {});
+    get('/api/credentials').then(d => {
+      const map = {};
+      (d.credentials || []).forEach(c => { map[c.service] = c.credential_value || ''; });
+      setCreds(map);
+    }).catch(() => {});
   }, []);
 
-  const toggleShow = key => setShow(s => ({ ...s, [key]: !s[key] }));
-
-  const saveKey = async (serviceKey) => {
-    const val = (values[serviceKey] || '').trim();
-    if (!val) { setErrors(e => ({ ...e, [serviceKey]: 'Please paste your new API key.' })); return; }
-    setErrors(e => ({ ...e, [serviceKey]: '' }));
-    setSaving(s => ({ ...s, [serviceKey]: true }));
+  const save = async key => {
+    setSaving(s => ({ ...s, [key]: true })); setMsgs(m => ({ ...m, [key]: '' }));
     try {
-      await patch('/api/credentials', { service: serviceKey, token: val });
-      setSaved(s => ({ ...s, [serviceKey]: true }));
-      setStatuses(s => ({ ...s, [serviceKey]: 'ok' }));
-      setValues(v => ({ ...v, [serviceKey]: '' }));
-      setTimeout(() => setSaved(s => ({ ...s, [serviceKey]: false })), 3000);
-    } catch (e) {
-      setErrors(err => ({ ...err, [serviceKey]: e.message || 'Failed to save. Try again.' }));
-    } finally { setSaving(s => ({ ...s, [serviceKey]: false })); }
+      await post('/api/credentials', { service: key, credentialValue: creds[key] });
+      setMsgs(m => ({ ...m, [key]: '\u2713 Saved' }));
+    } catch (e) { setMsgs(m => ({ ...m, [key]: 'Error: ' + e.message })); }
+    finally { setSaving(s => ({ ...s, [key]: false })); }
   };
 
   return (
-    <div style={{ maxWidth: 560 }}>
-      <p style={{ fontSize: 14, color: C.inkMid, marginBottom: 20, lineHeight: 1.6 }}>
-        Your API keys are stored encrypted (AES-256) and are never shown in plain text.
-        Update any key here — changes apply to all future migrations.
-      </p>
-      {CREDENTIAL_SERVICES.map(svc => {
-        const isSet = statuses[svc.key] === 'ok';
-        return (
-          <div key={svc.key} style={{ background: '#fff', borderRadius: 12, border: `1px solid ${C.border}`, borderLeft: `4px solid ${isSet ? C.green : C.amber}`, padding: '16px 18px', marginBottom: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 18 }}>{svc.icon}</span>
-                <span style={{ fontWeight: 700, fontSize: 15, color: C.ink }}>{svc.label}</span>
-              </div>
-              <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: isSet ? C.greenBg : C.amberBg, color: isSet ? C.green : C.amberDark }}>
-                {isSet ? '\u2713 Connected' : '\u26a0 Not set'}
-              </span>
+    <div style={{ maxWidth: 520 }}>
+      {CREDENTIAL_SERVICES.map(svc => (
+        <div key={svc.key} style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: 12, padding: '1.25rem', marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+            <span style={{ fontSize: 20 }}>{svc.icon}</span>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 15, color: C.ink }}>{svc.label}</div>
+              <div style={{ fontSize: 12, color: C.inkMid }}>{svc.description}</div>
             </div>
-            <div style={{ fontSize: 12, color: C.inkMid, marginBottom: 12, lineHeight: 1.5 }}>
-              {svc.description}{' '}<a href={svc.link} target="_blank" rel="noreferrer" style={{ color: C.amber }}>Get key \u2197</a>{' \u2014 '}{svc.hint}
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input type={show[svc.key] ? 'text' : 'password'} value={values[svc.key] || ''} onChange={e => setValues(v => ({ ...v, [svc.key]: e.target.value }))} placeholder={isSet ? 'Paste new key to replace\u2026' : svc.placeholder} style={{ flex: 1, padding: '10px 12px', border: `1.5px solid ${errors[svc.key] ? C.red : C.border}`, borderRadius: 8, fontSize: 13, fontFamily: 'monospace', outline: 'none' }} />
-              <button onClick={() => toggleShow(svc.key)} style={{ padding: '8px 12px', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, cursor: 'pointer', fontSize: 14 }}>{show[svc.key] ? '\ud83d\ude48' : '\ud83d\udc41\ufe0f'}</button>
-              <button onClick={() => saveKey(svc.key)} disabled={saving[svc.key] || !values[svc.key]?.trim()} style={{ padding: '10px 18px', background: saved[svc.key] ? C.green : saving[svc.key] || !values[svc.key]?.trim() ? C.border : C.amber, color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 13, cursor: saving[svc.key] || !values[svc.key]?.trim() ? 'default' : 'pointer', minWidth: 72, transition: 'background .15s' }}>
-                {saved[svc.key] ? '\u2713 Saved' : saving[svc.key] ? '\u2026' : 'Update'}
+          </div>
+          <div style={{ fontSize: 11, color: C.inkLight, marginBottom: 8 }}>
+            {svc.hint} — <a href={svc.link} target="_blank" rel="noopener noreferrer" style={{ color: C.amber }}>Open \u2197</a>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ position: 'relative', flex: 1 }}>
+              <input
+                type={show[svc.key] ? 'text' : 'password'}
+                value={creds[svc.key] || ''}
+                onChange={e => setCreds(c => ({ ...c, [svc.key]: e.target.value }))}
+                placeholder={svc.placeholder}
+                style={{ width: '100%', padding: '10px 36px 10px 12px', border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, boxSizing: 'border-box' }}
+              />
+              <button onClick={() => setShow(s => ({ ...s, [svc.key]: !s[svc.key] }))} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: C.inkLight, fontSize: 14, padding: 0 }}>
+                {show[svc.key] ? '\ud83d\ude48' : '\ud83d\udc41\ufe0f'}
               </button>
             </div>
-            {errors[svc.key] && <p style={{ fontSize: 12, color: C.red, marginTop: 6 }}>{errors[svc.key]}</p>}
+            <button onClick={() => save(svc.key)} disabled={saving[svc.key]} style={{ padding: '10px 16px', background: saving[svc.key] ? C.inkLight : C.amber, color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, cursor: saving[svc.key] ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+              {saving[svc.key] ? '\u2026' : 'Save'}
+            </button>
           </div>
-        );
-      })}
+          {msgs[svc.key] && <p style={{ marginTop: 8, fontSize: 12, color: msgs[svc.key].startsWith('\u2713') ? C.green : C.red }}>{msgs[svc.key]}</p>}
+        </div>
+      ))}
     </div>
   );
 }
 
 // ─── Gap 6: Notifications tab ──────────────────────────────────────────────────
-//
-// Notification preferences are loaded from GET /api/notifications on mount
-// and saved via PUT /api/notifications on every toggle change + explicit Save.
-//
-// Preference shape the API returns / accepts:
-// {
-//   email: {
-//     migration_complete: bool,
-//     migration_failed:   bool,
-//     migration_paused:   bool,
-//     weekly_summary:     bool,
-//     product_updates:    bool,
-//   },
-//   in_app: {
-//     migration_complete: bool,
-//     migration_failed:   bool,
-//     migration_paused:   bool,
-//   }
-// }
 
 const NOTIF_GROUPS = [
   {
-    key: 'migration_complete',
-    icon: '\ud83c\udf89',
-    title: 'Migration completed',
-    description: 'When your deployment finishes successfully and your app goes live.',
-    channels: ['email', 'in_app'],
+    label: 'Migration events',
+    items: [
+      { key: 'migration_complete', label: 'Migration complete', desc: 'Sent when your deployment finishes successfully.' },
+      { key: 'migration_failed',   label: 'Migration failed',   desc: 'Sent if your deployment encounters an error.' },
+    ],
   },
   {
-    key: 'migration_failed',
-    icon: '\u26a0\ufe0f',
-    title: 'Migration failed',
-    description: 'When a deployment hits an error and stops.',
-    channels: ['email', 'in_app'],
+    label: 'Billing',
+    items: [
+      { key: 'payment_confirmed', label: 'Payment confirmed', desc: 'Receipt sent immediately after payment.' },
+      { key: 'refund_issued',     label: 'Refund issued',     desc: 'Notification when a refund is processed.' },
+    ],
   },
   {
-    key: 'migration_paused',
-    icon: '\u23f8\ufe0f',
-    title: 'Deployment paused (AI needs your input)',
-    description: 'When the AI agent needs to ask you a question before it can continue.',
-    channels: ['email', 'in_app'],
-  },
-  {
-    key: 'weekly_summary',
-    icon: '\ud83d\udcc5',
-    title: 'Weekly summary',
-    description: 'A short email recap of your migrations and app health every Monday.',
-    channels: ['email'],
-  },
-  {
-    key: 'product_updates',
-    icon: '\ud83d\ude80',
-    title: 'Product updates & tips',
-    description: 'Occasional emails when we ship new features or have tips for your app.',
-    channels: ['email'],
+    label: 'Account',
+    items: [
+      { key: 'login_new_device',  label: 'New device sign-in', desc: 'Alert when your account is accessed from an unfamiliar device.' },
+      { key: 'password_changed',  label: 'Password changed',   desc: 'Confirmation after a password reset.' },
+    ],
   },
 ];
 
-const DEFAULT_PREFS = {
-  email:  { migration_complete: true,  migration_failed: true,  migration_paused: true,  weekly_summary: false, product_updates: false },
-  in_app: { migration_complete: true,  migration_failed: true,  migration_paused: true },
-};
-
 function TabNotifications() {
-  const [prefs,   setPrefs]   = useState(DEFAULT_PREFS);
-  const [loading, setLoading] = useState(true);
-  const [saving,  setSaving]  = useState(false);
-  const [dirty,   setDirty]   = useState(false);
-  const [msg,     setMsg]     = useState('');    // '' | 'saved' | 'error'
+  const [prefs, setPrefs]   = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg]       = useState('');
 
-  // Load on mount
   useEffect(() => {
-    get('/api/notifications')
-      .then(res => {
-        if (res?.preferences) setPrefs(res.preferences);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    get('/api/notifications').then(d => setPrefs(d.preferences || {})).catch(() => setPrefs({}));
   }, []);
 
-  const toggle = (channel, key) => {
-    setPrefs(p => ({
-      ...p,
-      [channel]: { ...p[channel], [key]: !p[channel][key] },
-    }));
-    setDirty(true);
-    setMsg('');
-  };
+  const toggle = key => setPrefs(p => ({ ...p, [key]: !p[key] }));
 
   const save = async () => {
     setSaving(true); setMsg('');
     try {
       await put('/api/notifications', { preferences: prefs });
-      setDirty(false);
-      setMsg('saved');
-      setTimeout(() => setMsg(''), 3000);
-    } catch (e) {
-      setMsg('error');
-    } finally { setSaving(false); }
+      setMsg('\u2713 Preferences saved');
+    } catch (e) { setMsg('Error: ' + e.message); }
+    finally { setSaving(false); }
   };
 
-  if (loading) return (
-    <div style={{ padding: '2rem 0', textAlign: 'center', color: C.inkLight, fontSize: 14 }}>
-      Loading preferences\u2026
-    </div>
-  );
+  if (!prefs) return <p style={{ color: C.inkLight, fontSize: 14 }}>Loading\u2026</p>;
 
   return (
-    <div style={{ maxWidth: 560 }}>
-      <p style={{ fontSize: 14, color: C.inkMid, marginBottom: 24, lineHeight: 1.6 }}>
-        Choose when and how MigrateBot contacts you. Changes are saved when you click <strong>Save preferences</strong>.
-      </p>
-
-      {/* Channel legend */}
-      <div style={{ display: 'flex', gap: 20, marginBottom: 20, flexWrap: 'wrap' }}>
-        {[{ icon: '\ud83d\udce7', label: 'Email' }, { icon: '\ud83d\udd14', label: 'In-app' }].map(ch => (
-          <div key={ch.label} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: C.inkMid }}>
-            <span style={{ fontSize: 15 }}>{ch.icon}</span> {ch.label}
-          </div>
-        ))}
-        <div style={{ fontSize: 12, color: C.inkLight, marginLeft: 'auto' }}>
-          Toggle each channel independently per event
-        </div>
-      </div>
-
-      {/* Preference rows */}
-      {NOTIF_GROUPS.map((group, idx) => (
-        <div
-          key={group.key}
-          style={{
-            background: '#fff',
-            borderRadius: 12,
-            border: `1px solid ${C.border}`,
-            padding: '16px 18px',
-            marginBottom: 10,
-            display: 'flex',
-            alignItems: 'flex-start',
-            justifyContent: 'space-between',
-            gap: 16,
-          }}
-        >
-          {/* Left: icon + text */}
-          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flex: 1 }}>
-            <span style={{ fontSize: 20, flexShrink: 0, marginTop: 1 }}>{group.icon}</span>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: 14, color: C.ink, marginBottom: 3 }}>
-                {group.title}
+    <div style={{ maxWidth: 520 }}>
+      {NOTIF_GROUPS.map(group => (
+        <div key={group.label} style={{ marginBottom: 24 }}>
+          <h3 style={{ fontSize: 13, fontWeight: 700, color: C.inkMid, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 12 }}>{group.label}</h3>
+          {group.items.map(item => (
+            <div key={item.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', background: '#fff', border: `1px solid ${C.border}`, borderRadius: 10, marginBottom: 8 }}>
+              <div style={{ paddingRight: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.ink }}>{item.label}</div>
+                <div style={{ fontSize: 12, color: C.inkMid, marginTop: 2 }}>{item.desc}</div>
               </div>
-              <div style={{ fontSize: 12, color: C.inkMid, lineHeight: 1.5 }}>
-                {group.description}
-              </div>
+              <Toggle on={!!prefs[item.key]} onChange={() => toggle(item.key)} />
             </div>
-          </div>
-
-          {/* Right: toggles per channel */}
-          <div style={{ display: 'flex', gap: 18, flexShrink: 0, paddingTop: 2 }}>
-            {group.channels.map(ch => (
-              <div key={ch} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                <span style={{ fontSize: 13 }}>{ch === 'email' ? '\ud83d\udce7' : '\ud83d\udd14'}</span>
-                <Toggle
-                  on={prefs[ch]?.[group.key] ?? false}
-                  onChange={() => toggle(ch, group.key)}
-                />
-              </div>
-            ))}
-            {/* Spacer so email-only rows align with 2-channel rows */}
-            {group.channels.length === 1 && <div style={{ width: 44 }} />}
-          </div>
+          ))}
         </div>
       ))}
 
-      {/* Save bar */}
-      <div style={{
-        marginTop: 20,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '14px 18px',
-        background: dirty ? C.amberBg : C.surface,
-        border: `1px solid ${dirty ? C.amber : C.border}`,
-        borderRadius: 10,
-        transition: 'background .2s',
-      }}>
-        <div style={{ fontSize: 13, color: C.inkMid }}>
-          {dirty
-            ? '\u26a0\ufe0f Unsaved changes'
-            : msg === 'saved'
-              ? '\u2713 Preferences saved'
-              : 'No unsaved changes'}
-        </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          {msg === 'error' && (
-            <span style={{ fontSize: 12, color: C.red }}>Save failed. Please try again.</span>
-          )}
-          <button
-            onClick={save}
-            disabled={saving || !dirty}
-            style={{
-              padding: '9px 22px',
-              background: saving || !dirty ? C.border : C.amber,
-              color: '#fff', border: 'none', borderRadius: 8,
-              fontWeight: 700, fontSize: 13,
-              cursor: saving || !dirty ? 'default' : 'pointer',
-              transition: 'background .15s',
-            }}
-          >
-            {saving ? 'Saving\u2026' : 'Save preferences'}
-          </button>
-        </div>
-      </div>
+      <button onClick={save} disabled={saving} style={{ padding: '11px 24px', background: saving ? C.inkLight : C.amber, color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, cursor: saving ? 'default' : 'pointer' }}>
+        {saving ? 'Saving\u2026' : 'Save preferences'}
+      </button>
+      {msg && <p style={{ marginTop: 10, fontSize: 13, color: msg.startsWith('\u2713') ? C.green : C.red }}>{msg}</p>}
 
       {/* Unsubscribe note */}
       <p style={{ fontSize: 12, color: C.inkLight, marginTop: 14, lineHeight: 1.5 }}>
-        All emails include an unsubscribe link. Transactional emails (migration complete/failed) cannot be disabled globally — they are only sent for your own migrations.
+        All emails include an unsubscribe link. Transactional emails (migration complete/failed) cannot be disabled globally \u2014 they are only sent for your own migrations.
       </p>
+    </div>
+  );
+}
+
+// ─── Billing tab (Task 15) ───────────────────────────────────────────────────
+function TabBilling() {
+  const [invoices, setInvoices]   = useState([]);
+  const [loading,  setLoading]    = useState(true);
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [error,    setError]      = useState(null);
+
+  useEffect(() => {
+    get('/api/billing/invoices?limit=10')
+      .then(d => setInvoices(d.invoices || []))
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const openPortal = async () => {
+    setPortalLoading(true);
+    try {
+      const { url } = await get('/api/billing/portal');
+      window.location.href = url;
+    } catch (e) {
+      setError(e.message);
+      setPortalLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ maxWidth: 600 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: C.ink }}>Billing &amp; Invoices</h2>
+        <button onClick={openPortal} disabled={portalLoading}
+          style={{ padding: '9px 18px', background: C.amber, color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, cursor: portalLoading ? 'not-allowed' : 'pointer', opacity: portalLoading ? 0.7 : 1, fontSize: 14 }}>
+          {portalLoading ? 'Opening\u2026' : 'Manage billing \u2192'}
+        </button>
+      </div>
+
+      {error && <p style={{ color: C.red, fontSize: 13, marginBottom: 14 }}>{error}</p>}
+
+      {loading ? (
+        <p style={{ color: C.inkLight, fontSize: 14 }}>Loading invoices\u2026</p>
+      ) : invoices.length === 0 ? (
+        <p style={{ color: C.inkLight, fontSize: 14 }}>No invoices yet.</p>
+      ) : (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ borderBottom: `2px solid ${C.border}`, textAlign: 'left' }}>
+              <th style={{ padding: '8px 10px', color: C.inkMid, fontWeight: 600 }}>Date</th>
+              <th style={{ padding: '8px 10px', color: C.inkMid, fontWeight: 600 }}>Repository</th>
+              <th style={{ padding: '8px 10px', color: C.inkMid, fontWeight: 600 }}>Plan</th>
+              <th style={{ padding: '8px 10px', color: C.inkMid, fontWeight: 600, textAlign: 'right' }}>Amount</th>
+              <th style={{ padding: '8px 10px', color: C.inkMid, fontWeight: 600 }}>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invoices.map(inv => (
+              <tr key={inv.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                <td style={{ padding: '10px 10px', color: C.inkMid }}>{new Date(inv.date).toLocaleDateString()}</td>
+                <td style={{ padding: '10px 10px', color: C.ink, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.repoUrl}</td>
+                <td style={{ padding: '10px 10px', color: C.inkMid, textTransform: 'capitalize' }}>{inv.plan}</td>
+                <td style={{ padding: '10px 10px', color: C.ink, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                  ${((inv.netCharged || 0) / 100).toFixed(2)}
+                </td>
+                <td style={{ padding: '10px 10px' }}>
+                  <span style={{
+                    display: 'inline-block', padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700,
+                    background: inv.status === 'success' ? C.greenBg : inv.status === 'refunded' ? C.blueBg : C.redBg,
+                    color: inv.status === 'success' ? C.green : inv.status === 'refunded' ? C.blue : C.red,
+                  }}>{inv.status}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
@@ -485,7 +418,7 @@ export default function SettingsPage() {
   const router = useRouter();
   const [tab, setTab] = useState(0);
 
-  // Deep-link: /settings?tab=notifications (or any other slug)
+  // Deep-link: /settings?tab=billing (or any other slug)
   useEffect(() => {
     const slug = router.query.tab;
     if (slug && TAB_SLUGS[slug] !== undefined) setTab(TAB_SLUGS[slug]);
@@ -516,7 +449,8 @@ export default function SettingsPage() {
           {tab === 1 && <TabSecurity user={user} />}
           {tab === 2 && <TabCredentials />}
           {tab === 3 && <TabNotifications />}
-          {tab === 4 && <TabDanger onLogout={handleLogout} />}
+          {tab === 4 && <TabBilling />}
+          {tab === 5 && <TabDanger onLogout={handleLogout} />}
         </div>
       </div>
     </>

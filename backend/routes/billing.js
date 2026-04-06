@@ -121,7 +121,7 @@ router.get('/portal', async (req, res, next) => {
 
     const session = await stripe.billingPortal.sessions.create({
       customer:   user.stripe_customer_id,
-      return_url: `${process.env.FRONTEND_URL}/settings/billing`,
+      return_url: `${process.env.FRONTEND_URL}/settings?tab=billing`,
     });
 
     res.json({ url: session.url });
