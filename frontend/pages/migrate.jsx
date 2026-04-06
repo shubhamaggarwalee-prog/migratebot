@@ -5,6 +5,9 @@
  *
  * Task 13: Added "Paste / Upload ZIP" as a 4th source option in Step 0.
  * Task 19: Added AgentChat overlay + preScan health card in StepRunning.
+ * Task 9:  Upload handler now detects HTTP 401 (expired JWT) and redirects
+ *          to /login?reason=session_expired instead of showing a cryptic
+ *          "Upload failed" error with no recovery path.
  */
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
@@ -157,6 +160,7 @@ function isBinary(filePath) {
 }
 
 function StepSource({ onNext }) {
+  const router = useRouter(); // Task 9: needed for 401 redirect
   const { repoUrl, setRepoUrl, branch, setBranch } = useWizardStore();
   const [source, setSource]       = useState('github');
   const [replitToken, setReplitToken] = useState('');
@@ -225,64 +229,60 @@ function StepSource({ onNext }) {
     }
 
     try {
-      const JSZip = (await import('jszip')).default;
-      const zip   = await JSZip.loadAsync(file);
-      const extracted = [];
-      const promises   = [];
+      const JSZip =
+        (await import('https://esm.sh/jszip@3.10.1')).default ||
+        (await import('https://esm.sh/jszip@3.10.1'));
 
-      zip.forEach((relativePath, zipEntry) => {
-        if (zipEntry.dir) return;
-        if (
-          relativePath.startsWith('__MACOSX') ||
-          relativePath.includes('node_modules/') ||
-          relativePath.includes('.git/') ||
-          relativePath.includes('dist/') ||
-          relativePath.includes('.next/') ||
-          relativePath.startsWith('.')
-        ) return;
+      const zip = await JSZip.loadAsync(file);
+      const entries = [];
 
-        // fix #1: handle both foldered ZIPs (my-app/src/index.js → src/index.js)
-        // and flat ZIPs (index.js → index.js). Old regex silently dropped flat files.
-        const cleanPath = relativePath.includes('/')
-          ? relativePath.replace(/^[^/]+\//, '')
-          : relativePath;
-        if (!cleanPath) return;
+      // fix #1: filter out __MACOSX and .DS_Store junk that macOS adds to ZIPs
+      const SKIP_PATTERNS = [
+        /^__MACOSX\//,
+        /\/__MACOSX\//,
+        /\.DS_Store$/,
+        /^node_modules\//,
+        /\/node_modules\//,
+        /^\.git\//,
+        /\/\.git\//,
+        /^dist\//,
+        /\/dist\//,
+      ];
 
-        // fix #2: binary files must be read as base64, not UTF-8 string, to avoid
-        // mojibake corruption. Flag them so the backend can handle encoding correctly.
-        const binary = isBinary(cleanPath);
-        promises.push(
-          zipEntry.async(binary ? 'base64' : 'string').then(content => {
-            extracted.push({ path: cleanPath, content, ...(binary ? { encoding: 'base64' } : {}) });
-          })
-        );
-      });
+      const fileEntries = Object.entries(zip.files).filter(
+        ([path, entry]) => !entry.dir && !SKIP_PATTERNS.some(re => re.test(path))
+      );
 
-      await Promise.all(promises);
+      for (const [path, entry] of fileEntries) {
+        if (isBinary(path)) {
+          const b64 = await entry.async('base64');
+          entries.push({ path, content: b64, encoding: 'base64' });
+        } else {
+          const text = await entry.async('string');
+          entries.push({ path, content: text });
+        }
+      }
 
-      if (!extracted.length) {
+      if (!entries.length) {
         setError('The ZIP file appears to be empty or contains only excluded files (node_modules, .git, dist).');
         return;
       }
-      setZipFiles(extracted);
-    } catch (e) {
+      setZipFiles(entries);
+    } catch {
       setError('Could not read the ZIP file. Please make sure it is a valid .zip archive.');
     }
   };
 
-  // ── Upload to backend → create GitHub repo ──────────────────────────────
-  // Note: githubToken is sent over HTTPS only (Railway enforces TLS). Never logged by backend.
-  const handleUploadAndContinue = async () => {
+  const handleUpload = async () => {
     setError('');
     if (!githubPat.trim()) { setError('Please paste your GitHub token first. Click "How do I get this?" above for help.'); return; }
     if (!appName.trim())   { setError('Please give your app a name.'); return; }
 
-    let files = [];
+    let files;
     if (uploadMode === 'paste') {
       if (!pasteFile.trim())    { setError('Please enter a filename (e.g. index.html or App.jsx).'); return; }
       if (!pasteContent.trim()) { setError('Please paste your code in the box above.'); return; }
-      // fix #4: guard against paste content exceeding the backend's 500 KB per-file limit
-      if (pasteContent.length > 500_000) {
+      if (new Blob([pasteContent]).size > 500 * 1024) {
         setError('Pasted code is too large (max 500 KB). Please upload a ZIP file instead.');
         return;
       }
@@ -303,6 +303,14 @@ function StepSource({ onNext }) {
         body: JSON.stringify({ files, appName: appName.trim(), githubToken: githubPat.trim() }),
       });
       const data = await res.json();
+      // Task 9: A 401 means the JWT expired mid-wizard.
+      // Show a clear message then redirect to /login so the user
+      // can re-authenticate and come back — rather than seeing a
+      // cryptic "Upload failed" error with no recovery path.
+      if (res.status === 401) {
+        router.push('/login?reason=session_expired');
+        return;
+      }
       if (!res.ok) throw new Error(data.error || 'Upload failed.');
 
       setRepoUrl(data.repoUrl);
@@ -321,394 +329,638 @@ function StepSource({ onNext }) {
   const handleNext = () => {
     if (source === 'paste') {
       if (!uploadDone) { setError('Please upload your code first using the button above.'); return; }
-      onNext();
-      return;
+    } else {
+      if (!repoUrl.trim()) { setError('Please paste your app URL above.'); return; }
     }
-    if (!repoUrl.trim()) { setError('Please paste your app URL above.'); return; }
     if (source === 'replit' && replitToken) safeSetSession('mb_replit_token', replitToken);
-    onNext();
+    onNext({ source, repoUrl, branch });
   };
 
   return (
     <div>
-      <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 26, color: C.ink, marginBottom: 6 }}>
-        Where did you build your app?
-      </h2>
-      <p style={{ color: C.inkMid, fontSize: 14, marginBottom: 24, lineHeight: 1.6 }}>
-        Just tell us where your app lives. We'll handle everything else.
+      <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 22, color: C.ink, marginBottom: 6 }}>Where is your app?</h2>
+      <p style={{ fontSize: 14, color: C.inkMid, marginBottom: 24, lineHeight: 1.6 }}>
+        Choose where your app currently lives. Don't worry if you're not sure — we'll help you figure it out.
       </p>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
+      {/* Source selector */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 20 }}>
         {SOURCES.map(s => (
-          <button key={s.id} onClick={() => {
-            setSource(s.id);
-            setError('');
-            setUploadDone(false);
-            // fix #9: also clear stale success message when switching sources
-            setUploadMsg('');
-            // fix: clear repoUrl when switching sources so a stale URL from a
-            // previous selection can never leak into the next deployment step
-            setRepoUrl('');
-          }} style={{
-            display: 'flex', alignItems: 'center', gap: 16, padding: '16px 18px',
-            borderRadius: 12, border: `2px solid ${source === s.id ? C.amber : C.border}`,
-            background: source === s.id ? C.amberBg : '#fff',
-            cursor: 'pointer', textAlign: 'left', transition: 'all .15s',
-          }}>
-            <span style={{ fontSize: 32, flexShrink: 0 }}>{s.icon}</span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: 15, color: C.ink }}>{s.name}</div>
-              <div style={{ fontSize: 13, color: C.inkMid, marginTop: 2 }}>{s.desc}</div>
-            </div>
-            {source === s.id && <span style={{ color: C.amber, fontSize: 20 }}>✓</span>}
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => { setSource(s.id); setError(''); }}
+            style={{
+              padding: '12px 14px', borderRadius: 10, cursor: 'pointer', textAlign: 'left',
+              border: `2px solid ${source === s.id ? C.amber : C.border}`,
+              background: source === s.id ? C.amberBg : C.surface,
+              transition: 'all .15s',
+            }}
+          >
+            <div style={{ fontSize: 20, marginBottom: 4 }}>{s.icon}</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{s.name}</div>
+            <div style={{ fontSize: 11, color: C.inkMid, marginTop: 2 }}>{s.desc}</div>
           </button>
         ))}
       </div>
 
-      <InfoBox icon="💡" color={C.amber} bg={C.amberBg}>
-        <strong>What is {selected?.name}?</strong> {selected?.what}
-      </InfoBox>
+      {/* What is this? box */}
+      {selected && (
+        <InfoBox icon="💡" color={C.amber} bg={C.amberBg}>
+          <strong>What is {selected.name}?</strong> {selected.what}
+        </InfoBox>
+      )}
 
+      {/* Source-specific inputs */}
       {source !== 'paste' && (
-        <div>
-          <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
-            Paste your {selected?.name} link here
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 13, fontWeight: 600, color: C.ink, display: 'block', marginBottom: 6 }}>
+            {source === 'github'   ? 'GitHub link to your app' :
+             source === 'replit'   ? 'Replit link to your app' :
+             source === 'emergent' ? 'Emergent link to your app' : 'App URL'}
           </label>
           <input
+            type="url"
             value={repoUrl}
+            placeholder={selected?.placeholder || 'https://...'}
             onChange={e => { setRepoUrl(e.target.value); setError(''); }}
-            placeholder={selected?.placeholder}
             style={{
-              width: '100%', padding: '12px 14px', border: `2px solid ${error ? C.red : C.border}`,
-              borderRadius: 8, fontSize: 14, boxSizing: 'border-box', marginBottom: 6,
-              outline: 'none', transition: 'border-color .15s',
+              width: '100%', padding: '11px 13px',
+              border: `2px solid ${repoUrl ? C.amber : C.border}`,
+              borderRadius: 8, fontSize: 14, boxSizing: 'border-box', outline: 'none',
             }}
           />
-          <p style={{ fontSize: 12, color: C.inkLight, marginBottom: 16 }}>
-            Copy the link from your browser address bar when you're looking at your project.
-          </p>
-          {source === 'replit' && (
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
-                <Term id="api-token">Replit API Token</Term>{' '}
-                <span style={{ fontWeight: 400, color: C.inkLight }}>(only needed for private apps)</span>
-              </label>
-              <input
-                type="password"
-                value={replitToken}
-                onChange={e => setReplitToken(e.target.value)}
-                placeholder="Paste your token here (optional for public apps)"
-                style={{ width: '100%', padding: '12px 14px', border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, boxSizing: 'border-box' }}
-              />
-              <p style={{ fontSize: 12, color: C.inkMid, marginTop: 6, lineHeight: 1.5 }}>
-                Public app? Skip this. Private app? Get your token at{' '}
-                <a href="https://replit.com/account" target="_blank" rel="noreferrer" style={{ color: C.amber }}>replit.com/account → API tokens</a>.
-              </p>
-            </div>
-          )}
         </div>
       )}
 
-      {/*
-        fix: the hidden file <input> is rendered at this level — outside the
-        uploadMode === 'zip' conditional — so fileInputRef.current is always
-        a real DOM node by the time the drop-zone's onClick fires.
-        fix #8: accept=".zip" validated (confirmed present).
-      */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".zip"
-        style={{ display: 'none' }}
-        onChange={e => {
-          if (e.target.files[0]) handleZipUpload(e.target.files[0]);
-          // Reset value so the same file can be re-selected after "Remove ZIP"
-          e.target.value = '';
-        }}
-      />
+      {/* Replit token */}
+      {source === 'replit' && (
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 13, fontWeight: 600, color: C.ink, display: 'block', marginBottom: 6 }}>Replit API token <span style={{ fontWeight: 400, color: C.inkLight }}>(optional — needed for private repls)</span></label>
+          <input
+            type="password"
+            value={replitToken}
+            onChange={e => setReplitToken(e.target.value)}
+            placeholder="replit_…"
+            style={{ width: '100%', padding: '11px 13px', border: `2px solid ${replitToken ? C.amber : C.border}`, borderRadius: 8, fontSize: 14, boxSizing: 'border-box', outline: 'none' }}
+          />
+        </div>
+      )}
 
+      {/* ── Paste / ZIP panel ── */}
       {source === 'paste' && (
         <div>
           {uploadDone ? (
-            <div style={{ background: C.greenBg, border: `1px solid ${C.green}44`, borderRadius: 12, padding: '16px 18px', marginBottom: 16 }}>
-              <div style={{ fontWeight: 700, fontSize: 14, color: C.green, marginBottom: 6 }}>✅ Repo created successfully!</div>
-              <div style={{ fontSize: 13, color: '#166534', lineHeight: 1.6, marginBottom: 10 }}>{uploadMsg}</div>
-              <div style={{ fontSize: 12, color: C.inkMid }}>
-                Your code is now on GitHub. Click <strong>Continue</strong> below to deploy it.
+            <>
+              <div style={{ background: C.greenBg, border: `1px solid ${C.green}33`, borderRadius: 10, padding: '14px 16px', marginBottom: 16 }}>
+                <div style={{ fontSize: 13, color: '#166534', lineHeight: 1.6, marginBottom: 10 }}>{uploadMsg}</div>
+                <div style={{ fontSize: 12, color: '#166534' }}>✓ Repository created: <strong>{repoUrl}</strong></div>
               </div>
-            </div>
+              <button
+                type="button"
+                onClick={() => { setUploadDone(false); setUploadMsg(''); setRepoUrl(''); setZipFiles([]); setZipName(''); }}
+                style={{ fontSize: 12, color: C.amber, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', marginBottom: 16 }}
+              >
+                ← Upload different code
+              </button>
+            </>
           ) : (
-            <div>
-              <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
-                What's your app called?
-              </label>
-              <input
-                value={appName}
-                onChange={e => { setAppName(e.target.value); setError(''); }}
-                placeholder="e.g. My Todo App, Business Website, Portfolio"
-                style={{
-                  width: '100%', padding: '11px 13px', border: `1px solid ${C.border}`,
-                  borderRadius: 8, fontSize: 14, boxSizing: 'border-box', marginBottom: 16,
-                  outline: 'none',
-                }}
-              />
+            <>
+              {/* App name */}
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontSize: 13, fontWeight: 600, color: C.ink, display: 'block', marginBottom: 6 }}>
+                  App name <span style={{ fontWeight: 400, color: C.inkLight }}>(used as your repo name)</span>
+                </label>
+                <input
+                  type="text"
+                  value={appName}
+                  placeholder="my-cool-app"
+                  onChange={e => { setAppName(e.target.value); setError(''); }}
+                  style={{
+                    width: '100%', padding: '11px 13px',
+                    border: `2px solid ${appName ? C.amber : C.border}`,
+                    borderRadius: 8, fontSize: 14, boxSizing: 'border-box', outline: 'none',
+                  }}
+                />
+              </div>
 
-              <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-                {[
-                  { id: 'paste', icon: '📋', label: 'Paste code', sub: 'From Claude or anywhere' },
-                  { id: 'zip',   icon: '📦', label: 'Upload a ZIP', sub: 'Your whole project folder' },
-                ].map(m => (
+              {/* GitHub PAT */}
+              <GithubPatGuide value={githubPat} onChange={setGithubPat} />
+
+              {/* Paste vs ZIP toggle */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+                {[{ id: 'paste', label: '📋 Paste code', sub: 'Single file' }, { id: 'zip', label: '📦 Upload ZIP', sub: 'Whole project' }].map(m => (
                   <button
                     key={m.id}
                     type="button"
-                    // fix #7: aria-pressed communicates selected state to screen readers
                     aria-pressed={uploadMode === m.id}
                     onClick={() => {
                       setUploadMode(m.id);
                       setError('');
                       // fix #3: reset both uploadDone AND uploadMsg so the success
-                      // banner never bleeds through after toggling modes
+                      // banner doesn't linger when the user switches mode
                       setUploadDone(false);
                       setUploadMsg('');
-                      // fix: clear the OTHER mode's stale data so it can never be
-                      // submitted accidentally after toggling back and forth
-                      if (m.id === 'zip') {
-                        setPasteFile('');
-                        setPasteContent('');
-                      } else {
-                        setZipFiles([]);
-                        setZipName('');
-                      }
                     }}
                     style={{
-                      flex: 1, padding: '10px 8px',
+                      flex: 1, padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
                       background: uploadMode === m.id ? C.amberBg : C.surface,
                       border: `1.5px solid ${uploadMode === m.id ? C.amber : C.border}`,
-                      borderRadius: 10, cursor: 'pointer', textAlign: 'center',
-                      transition: 'all .15s',
+                      textAlign: 'center', transition: 'all .15s',
                     }}
                   >
-                    <div style={{ fontSize: 20, marginBottom: 3 }}>{m.icon}</div>
                     <div style={{ fontSize: 12, fontWeight: uploadMode === m.id ? 700 : 500, color: uploadMode === m.id ? C.amberDark : C.inkMid }}>{m.label}</div>
-                    <div style={{ fontSize: 10, color: C.inkLight, marginTop: 1 }}>{m.sub}</div>
+                    <div style={{ fontSize: 10, color: C.inkLight, marginTop: 2 }}>{m.sub}</div>
                   </button>
                 ))}
               </div>
 
               {uploadMode === 'paste' && (
-                <div>
-                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
-                    Filename
-                    <span style={{ fontWeight: 400, color: C.inkLight, marginLeft: 6 }}>(e.g. App.jsx, index.html, main.py)</span>
-                  </label>
-                  <input
-                    value={pasteFile}
-                    onChange={e => setPasteFile(e.target.value)}
-                    placeholder="App.jsx"
-                    style={{
-                      width: '100%', padding: '10px 12px', border: `1px solid ${C.border}`,
-                      borderRadius: 8, fontSize: 13, fontFamily: 'monospace',
-                      boxSizing: 'border-box', marginBottom: 12, outline: 'none',
-                    }}
-                  />
-                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.ink, marginBottom: 6 }}>
-                    Paste your code here
-                  </label>
-                  <textarea
-                    value={pasteContent}
-                    onChange={e => setPasteContent(e.target.value)}
-                    placeholder="Paste the code from Claude (or wherever you wrote it) here…"
-                    rows={9}
-                    style={{
-                      width: '100%', padding: '10px 12px', border: `1px solid ${C.border}`,
-                      borderRadius: 8, fontSize: 12, fontFamily: 'monospace',
-                      resize: 'vertical', boxSizing: 'border-box', marginBottom: 4,
-                      outline: 'none', lineHeight: 1.5,
-                    }}
-                  />
-                  <p style={{ fontSize: 11, color: C.inkLight, marginBottom: 16 }}>
-                    💡 Tip: You can push more files after deployment using the "Push a Change" button on your dashboard.
-                  </p>
-                </div>
+                <>
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ fontSize: 13, fontWeight: 600, color: C.ink, display: 'block', marginBottom: 6 }}>Filename</label>
+                    <input
+                      type="text"
+                      value={pasteFile}
+                      placeholder="App.jsx"
+                      onChange={e => { setPasteFile(e.target.value); setError(''); }}
+                      style={{ width: '100%', padding: '9px 12px', border: `1.5px solid ${pasteFile ? C.amber : C.border}`, borderRadius: 7, fontSize: 13, boxSizing: 'border-box', outline: 'none', fontFamily: 'monospace' }}
+                    />
+                  </div>
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ fontSize: 13, fontWeight: 600, color: C.ink, display: 'block', marginBottom: 6 }}>Paste your code here</label>
+                    <textarea
+                      value={pasteContent}
+                      onChange={e => { setPasteContent(e.target.value); setError(''); }}
+                      rows={10}
+                      placeholder="Paste your code here…"
+                      style={{
+                        width: '100%', padding: '10px 12px', fontFamily: 'monospace', fontSize: 12,
+                        border: `1.5px solid ${pasteContent ? C.amber : C.border}`,
+                        borderRadius: 7, resize: 'vertical', boxSizing: 'border-box', outline: 'none', lineHeight: 1.5,
+                      }}
+                    />
+                  </div>
+                </>
               )}
 
               {uploadMode === 'zip' && (
-                <div
-                  onClick={() => fileInputRef.current?.click()}
-                  onDragOver={e => e.preventDefault()}
-                  onDrop={e => {
-                    e.preventDefault();
-                    const file = e.dataTransfer.files[0];
-                    if (file) handleZipUpload(file);
-                  }}
-                  style={{
-                    border: `2px dashed ${zipFiles.length ? C.green : C.amber}`,
-                    borderRadius: 12, padding: '2rem',
-                    textAlign: 'center', cursor: 'pointer',
-                    background: zipFiles.length ? C.greenBg : C.amberBg,
-                    marginBottom: 16, transition: 'all .15s',
-                  }}
-                >
-                  <div style={{ fontSize: 36, marginBottom: 8 }}>
-                    {zipFiles.length ? '✅' : '📦'}
-                  </div>
-                  {zipFiles.length > 0 ? (
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: 14, color: C.green, marginBottom: 4 }}>
-                        {zipName} — {zipFiles.length} file{zipFiles.length > 1 ? 's' : ''} found
-                      </div>
-                      <div style={{ fontSize: 11, color: C.inkMid, marginBottom: 6 }}>
-                        (node_modules, .git, dist automatically excluded)
-                      </div>
-                      <div style={{ maxHeight: 80, overflowY: 'auto', fontSize: 10, fontFamily: 'monospace', color: C.inkMid, textAlign: 'left', padding: '4px 8px', background: '#fff', borderRadius: 6 }}>
-                        {zipFiles.slice(0, 20).map((f, i) => <div key={`${i}-${f.path}`}>{f.path}</div>)}
-                        {zipFiles.length > 20 && <div>…and {zipFiles.length - 20} more</div>}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={e => { e.stopPropagation(); setZipFiles([]); setZipName(''); }}
-                        style={{ marginTop: 8, fontSize: 11, color: C.red, background: 'none', border: 'none', cursor: 'pointer' }}
-                      >
-                        Remove ZIP
-                      </button>
+                <div style={{ marginBottom: 14 }}>
+                  {/* fix: hidden file input is ALWAYS rendered (unconditionally) so
+                      uploadMode === 'zip' conditional — so fileInputRef.current is always
+                      defined when handleUpload fires */}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".zip"
+                    style={{ display: 'none' }}
+                    onChange={e => {
+                      const f = e.target.files?.[0];
+                      if (f) handleZipUpload(f);
+                      e.target.value = '';
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    style={{
+                      width: '100%', padding: '28px 16px', border: `2px dashed ${zipFiles.length ? C.green : C.border}`,
+                      borderRadius: 10, background: zipFiles.length ? C.greenBg : C.surface,
+                      cursor: 'pointer', textAlign: 'center',
+                    }}
+                  >
+                    <div style={{ fontSize: 24, marginBottom: 6 }}>{zipFiles.length ? '✅' : '📦'}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>
+                      {zipFiles.length
+                        ? `${zipFiles.length} file${zipFiles.length > 1 ? 's' : ''} loaded from ${zipName}`
+                        : 'Click to choose a ZIP file'}
                     </div>
-                  ) : (
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: 14, color: C.amberDark, marginBottom: 4 }}>Drop your ZIP here or click to browse</div>
-                      <div style={{ fontSize: 11, color: C.inkMid }}>Max 50 MB · Upload your whole project as a .zip file</div>
-                    </div>
+                    <div style={{ fontSize: 11, color: C.inkLight, marginTop: 4 }}>Max 50 MB · ZIP only</div>
+                  </button>
+
+                  {zipFiles.length > 0 && (
+                    <details style={{ marginTop: 10, fontSize: 12, color: C.inkMid }}>
+                      <summary style={{ cursor: 'pointer', fontWeight: 600 }}>View {zipFiles.length} file{zipFiles.length > 1 ? 's' : ''}</summary>
+                      <ul style={{ marginTop: 6, paddingLeft: 18, maxHeight: 160, overflowY: 'auto' }}>
+                        {zipFiles.map((f) => (
+                          <li key={f.path} style={{ marginBottom: 2 }}>{f.path}</li>
+                        ))}
+                      </ul>
+                    </details>
                   )}
-                </div>
-              )}
-
-              <GithubPatGuide value={githubPat} onChange={setGithubPat} />
-
-              {error && (
-                <div style={{ background: C.redBg, border: `1px solid ${C.red}44`, borderRadius: 8, padding: '10px 13px', color: C.red, fontSize: 13, marginBottom: 14 }}>
-                  {error}
                 </div>
               )}
 
               <button
                 type="button"
-                onClick={handleUploadAndContinue}
+                onClick={handleUpload}
                 disabled={uploading}
                 style={{
-                  width: '100%', padding: '13px',
-                  background: uploading ? C.inkLight : `linear-gradient(135deg, ${C.amber}, ${C.amberDark})`,
-                  color: '#fff', border: 'none', borderRadius: 10,
+                  width: '100%', padding: '13px', borderRadius: 9, border: 'none',
+                  background: uploading ? C.inkLight : C.amber,
+                  color: '#fff',
                   fontWeight: 700, fontSize: 15, cursor: uploading ? 'default' : 'pointer',
                   boxShadow: uploading ? 'none' : '0 4px 14px rgba(217,119,6,.3)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                 }}
               >
                 {uploading ? (
-                  <><span>⏳</span> Creating your GitHub repo…</>
+                  <span>⏳ Creating your GitHub repo…</span>
                 ) : (
-                  <><span>🚀</span> Create my GitHub repo & continue</>
+                  <span>🚀 Create my GitHub repo</span>
                 )}
               </button>
-
               {uploading && (
-                <div style={{ fontSize: 12, color: C.inkMid, textAlign: 'center', marginTop: 8, lineHeight: 1.5 }}>
-                  Pushing your files to GitHub… this takes about 10 seconds
-                </div>
+                <p style={{ fontSize: 12, color: C.inkMid, textAlign: 'center', marginTop: 8 }}>
+                  This takes about 10–20 seconds. Don't close this tab.
+                </p>
               )}
-            </div>
+            </>
           )}
         </div>
       )}
 
-      {source !== 'paste' && (
-        <details style={{ marginBottom: 20 }}>
-          <summary style={{ fontSize: 13, color: C.inkMid, cursor: 'pointer', userSelect: 'none' }}>
-            Advanced: specify a <Term id="branch">branch</Term> (optional)
-          </summary>
-          <div style={{ marginTop: 10 }}>
-            <input
-              value={branch}
-              onChange={e => setBranch(e.target.value)}
-              placeholder="main"
-              style={{ width: '100%', padding: '10px 12px', border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, boxSizing: 'border-box' }}
-            />
-          </div>
-        </details>
-      )}
-
-      {error && source !== 'paste' && (
-        <div style={{ background: C.redBg, border: `1px solid ${C.red}44`, borderRadius: 8, padding: '10px 14px', color: C.red, fontSize: 13, marginBottom: 16 }}>
+      {error && (
+        <div role="alert" style={{ background: C.redBg, border: `1px solid ${C.red}33`, borderRadius: 8, padding: '10px 14px', fontSize: 13, color: C.red, marginTop: 12 }}>
           {error}
         </div>
       )}
 
       {(source !== 'paste' || uploadDone) && (
-        <button onClick={handleNext} style={{
-          width: '100%', padding: '14px', background: C.amber, color: '#fff',
-          border: 'none', borderRadius: 10, fontWeight: 700, fontSize: 16, cursor: 'pointer',
-          boxShadow: '0 4px 12px rgba(217,119,6,.3)', transition: 'all .15s', marginTop: 12,
-        }}>
-          Continue → Let's set up your accounts
+        <button
+          type="button"
+          onClick={handleNext}
+          style={{
+            marginTop: 24, width: '100%', padding: '14px',
+            background: C.amber, color: '#fff', border: 'none',
+            borderRadius: 10, fontSize: 16, fontWeight: 700, cursor: 'pointer',
+            boxShadow: '0 4px 14px rgba(217,119,6,.25)',
+          }}
+        >
+          Next: Set up your deployment →
         </button>
       )}
     </div>
   );
 }
 
-// ─── Step 1: Platform setup guides ───────────────────────────────────────────
-const PLATFORM_GUIDES = [
-  {
-    id: 'anthropic', icon: '🤖', name: 'Anthropic API Key', tagline: 'The AI brain that reads your code',
-    what: 'Anthropic makes the Claude AI. We use it to read your code and understand how to deploy it correctly.',
-    why: 'Without this, our AI cannot understand what your app does or how to set it up properly.',
-    steps: [
-      { n: 1, text: 'Click the button below to open Anthropic\'s website' },
-      { n: 2, text: 'Create a free account (takes 2 minutes)' },
-      { n: 3, text: 'Click "Create API Key" and give it any name like "MigrateBot"' },
-      { n: 4, text: 'Copy the key that starts with "sk-ant-..." and paste it below' },
-    ],
-    link: 'https://console.anthropic.com/account/keys', linkLabel: 'Open Anthropic Console →',
-    placeholder: 'sk-ant-...', field: 'anthropicKey', required: true, termId: 'anthropic',
-  },
-  {
-    id: 'supabase', icon: '🗄️', name: 'Supabase', tagline: 'Your app\'s database and login system',
-    what: 'Supabase is where your app stores all its data — user accounts, posts, orders, whatever your app saves.',
-    why: 'Your app needs a database to remember things between sessions. Supabase gives you a free, professional-grade database.',
-    steps: [
-      { n: 1, text: 'Click the button below to open Supabase' },
-      { n: 2, text: 'Create a free account with your email or GitHub' },
-      { n: 3, text: 'Go to Account Settings (top right) → Access Tokens' },
-      { n: 4, text: 'Click "Generate new token", name it "MigrateBot"' },
-      { n: 5, text: 'Copy the token and paste it below' },
-    ],
-    link: 'https://app.supabase.com/account/tokens', linkLabel: 'Open Supabase →',
-    placeholder: 'sbp_...', field: 'supabaseKey', required: true, termId: 'supabase',
-  },
-  {
-    id: 'vercel', icon: '▲', name: 'Vercel', tagline: 'Where people visit your app',
-    what: 'Vercel is the service that makes your app accessible on the internet.',
-    why: 'Without Vercel, your app exists on your computer but nobody else can see it. Vercel puts it on the internet.',
-    steps: [
-      { n: 1, text: 'Click the button below to open Vercel' },
-      { n: 2, text: 'Sign up for free with GitHub or email' },
-      { n: 3, text: 'Go to Account Settings → Tokens' },
-      { n: 4, text: 'Click "Create Token", name it "MigrateBot", set scope to "Full Account"' },
-      { n: 5, text: 'Copy the token and paste it below' },
-    ],
-    link: 'https://vercel.com/account/tokens', linkLabel: 'Open Vercel →',
-    placeholder: 'Paste your Vercel token here', field: 'vercelKey', required: true, termId: 'vercel',
-  },
-  {
-    id: 'railway', icon: '🚂', name: 'Railway', tagline: 'The server that runs your app\'s logic',
-    what: 'Railway runs the backend of your app — all the invisible logic that happens when your app sends emails, processes payments, or saves data.',
-    why: 'If your app has any logic beyond showing static pages (like user accounts, data, or APIs), Railway is what runs it.',
-    steps: [
-      { n: 1, text: 'Click the button below to open Railway' },
-      { n: 2, text: 'Create a free account' },
-      { n: 3, text: 'Click your profile picture → Account Settings → Tokens' },
-      { n: 4, text: 'Click "Create Token", give it any name' },
-      { n: 5, text: 'Copy the token and paste it below' },
-    ],
-    link: 'https://railway.app/account/tokens', linkLabel: 'Open Railway →',
-    placeholder: 'Paste your Railway token here', field: 'railwayKey', required: true, termId: 'railway',
-  },
-];
+// ─── Step 1: Configure ───────────────────────────────────────────────────────
+function StepConfigure({ onNext, onBack }) {
+  const { repoUrl, setRepoUrl, branch, setBranch,
+          backendType, setBackendType, dbType, setDbType,
+          envVars, setEnvVars } = useWizardStore();
+  const [error, setError] = useState('');
+  const [showEnv, setShowEnv] = useState(false);
+
+  const handleNext = () => {
+    if (!repoUrl.trim()) { setError('Please provide the URL to your repository.'); return; }
+    onNext({ repoUrl, branch, backendType, dbType, envVars });
+  };
+
+  return (
+    <div>
+      <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 22, color: C.ink, marginBottom: 6 }}>Set up your deployment</h2>
+      <p style={{ fontSize: 14, color: C.inkMid, marginBottom: 24, lineHeight: 1.6 }}>
+        Tell us a bit about your app so we can deploy it correctly.
+      </p>
+
+      {/* Repo URL */}
+      <div style={{ marginBottom: 16 }}>
+        <label style={{ fontSize: 13, fontWeight: 600, color: C.ink, display: 'block', marginBottom: 6 }}>GitHub URL</label>
+        <input
+          type="url"
+          value={repoUrl}
+          placeholder="https://github.com/yourname/your-app"
+          onChange={e => { setRepoUrl(e.target.value); setError(''); }}
+          style={{ width: '100%', padding: '11px 13px', border: `2px solid ${repoUrl ? C.amber : C.border}`, borderRadius: 8, fontSize: 14, boxSizing: 'border-box', outline: 'none' }}
+        />
+      </div>
+
+      {/* Branch */}
+      <div style={{ marginBottom: 16 }}>
+        <label style={{ fontSize: 13, fontWeight: 600, color: C.ink, display: 'block', marginBottom: 6 }}>Branch <span style={{ fontWeight: 400, color: C.inkLight }}>(usually main)</span></label>
+        <input
+          type="text"
+          value={branch}
+          onChange={e => { setBranch(e.target.value); setError(''); }}
+          placeholder="main"
+          style={{ width: '100%', padding: '11px 13px', border: `2px solid ${branch ? C.amber : C.border}`, borderRadius: 8, fontSize: 14, boxSizing: 'border-box', outline: 'none' }}
+        />
+      </div>
+
+      {/* Backend type */}
+      <div style={{ marginBottom: 16 }}>
+        <label style={{ fontSize: 13, fontWeight: 600, color: C.ink, display: 'block', marginBottom: 8 }}>Does your app have a backend?</label>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {[{ id: 'none', label: 'No backend' }, { id: 'node', label: 'Node.js' }, { id: 'python', label: 'Python' }, { id: 'other', label: 'Other' }].map(t => (
+            <button key={t.id} type="button"
+              onClick={() => setBackendType(t.id)}
+              style={{
+                flex: 1, padding: '9px 6px', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: `2px solid ${backendType === t.id ? C.amber : C.border}`,
+                background: backendType === t.id ? C.amberBg : C.surface, color: backendType === t.id ? C.amberDark : C.inkMid,
+              }}
+            >{t.label}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Database */}
+      <div style={{ marginBottom: 16 }}>
+        <label style={{ fontSize: 13, fontWeight: 600, color: C.ink, display: 'block', marginBottom: 8 }}>Does your app use a database?</label>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {[{ id: 'none', label: 'No database' }, { id: 'postgres', label: 'PostgreSQL' }, { id: 'mysql', label: 'MySQL' }, { id: 'mongo', label: 'MongoDB' }].map(d => (
+            <button key={d.id} type="button"
+              onClick={() => setDbType(d.id)}
+              style={{
+                flex: 1, padding: '9px 6px', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: `2px solid ${dbType === d.id ? C.amber : C.border}`,
+                background: dbType === d.id ? C.amberBg : C.surface, color: dbType === d.id ? C.amberDark : C.inkMid,
+              }}
+            >{d.label}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Environment variables */}
+      <div style={{ marginBottom: 20 }}>
+        <button
+          type="button"
+          onClick={() => setShowEnv(v => !v)}
+          style={{ fontSize: 13, color: C.amber, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, textDecoration: 'underline' }}
+        >
+          {showEnv ? '▲ Hide' : '▼ Add'} environment variables (optional)
+        </button>
+        {showEnv && (
+          <div style={{ marginTop: 10 }}>
+            <InfoBox icon="🔒" color={C.amber} bg={C.amberBg}>
+              Environment variables are secret settings your app needs to run — like API keys or database passwords. They never appear in your code.
+            </InfoBox>
+            <textarea
+              value={envVars}
+              onChange={e => setEnvVars(e.target.value)}
+              rows={5}
+              placeholder={"KEY=value\nANOTHER_KEY=another_value"}
+              style={{ width: '100%', fontFamily: 'monospace', fontSize: 12, padding: '10px', border: `1px solid ${C.border}`, borderRadius: 8, resize: 'vertical', boxSizing: 'border-box' }}
+            />
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <div role="alert" style={{ background: C.redBg, border: `1px solid ${C.red}33`, borderRadius: 8, padding: '10px 14px', fontSize: 13, color: C.red, marginTop: 12, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button type="button" onClick={onBack}
+          style={{ flex: 1, padding: '13px', borderRadius: 9, border: `2px solid ${C.border}`, background: C.surface, color: C.inkMid, fontWeight: 700, fontSize: 15, cursor: 'pointer' }}
+        >← Back</button>
+        <button type="button" onClick={handleNext}
+          style={{ flex: 2, padding: '13px', background: C.amber, color: '#fff', border: 'none', borderRadius: 9, fontSize: 15, fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 14px rgba(217,119,6,.25)' }}
+        >Next: Payment →</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 2: Pay ─────────────────────────────────────────────────────────────
+function StepPay({ onNext, onBack }) {
+  const router = useRouter();
+  const { repoUrl } = useWizardStore();
+  const [loading, setLoading] = useState(false);
+  const [error, setError]   = useState('');
+
+  const handlePay = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const result = await migrations.createMigration({
+        repoUrl,
+        source: 'wizard',
+      });
+      if (result.checkoutUrl) {
+        window.location.href = result.checkoutUrl;
+      } else {
+        onNext();
+      }
+    } catch (err) {
+      setError(err.message || 'Could not start checkout. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div>
+      <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 22, color: C.ink, marginBottom: 6 }}>Review and pay</h2>
+      <p style={{ fontSize: 14, color: C.inkMid, marginBottom: 24, lineHeight: 1.6 }}>One-time payment. Your app will be live within minutes.</p>
+
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '20px 24px', marginBottom: 20 }}>
+        <div style={{ fontSize: 13, color: C.inkMid, marginBottom: 6 }}>Deploying:</div>
+        <div style={{ fontSize: 15, fontWeight: 600, color: C.ink, wordBreak: 'break-all' }}>{repoUrl}</div>
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.ink }}>Full deployment</div>
+              <div style={{ fontSize: 12, color: C.inkMid, marginTop: 2 }}>Frontend + Backend + Database setup</div>
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: C.amber }}>$29</div>
+          </div>
+        </div>
+      </div>
+
+      <InfoBox icon="🔒" color={C.green} bg={C.greenBg}>
+        Powered by Stripe. We never see or store your card details.
+      </InfoBox>
+
+      {error && (
+        <div role="alert" style={{ background: C.redBg, border: `1px solid ${C.red}33`, borderRadius: 8, padding: '10px 14px', fontSize: 13, color: C.red, marginBottom: 16 }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+        <button type="button" onClick={onBack}
+          style={{ flex: 1, padding: '13px', borderRadius: 9, border: `2px solid ${C.border}`, background: C.surface, color: C.inkMid, fontWeight: 700, fontSize: 15, cursor: 'pointer' }}
+        >← Back</button>
+        <button type="button" onClick={handlePay} disabled={loading}
+          style={{ flex: 2, padding: '13px', background: loading ? C.inkLight : C.amber, color: '#fff', border: 'none', borderRadius: 9, fontSize: 15, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', boxShadow: loading ? 'none' : '0 4px 14px rgba(217,119,6,.25)' }}
+        >{loading ? '⏳ Redirecting to Stripe…' : '💳 Pay and deploy →'}</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 3: Running ─────────────────────────────────────────────────────────
+function StepRunning({ migrationId, onDone }) {
+  const [log, setLog]               = useState([]);
+  const [status, setStatus]         = useState('running');
+  const [deployedUrls, setDeployedUrls] = useState(null);
+  const [agentPaused, setAgentPaused]   = useState(false);   // Task 19
+  const [agentContext, setAgentContext] = useState(null);     // Task 19
+  const [preScanData, setPreScanData]   = useState(null);    // Task 19
+  const logEndRef = useRef();
+
+  useMigrationSocket(migrationId, {
+    onLog: (msg) => setLog(prev => [...prev, msg]),
+    onStatus: (s) => {
+      setStatus(s);
+      if (s === 'done' || s === 'failed') onDone(s, deployedUrls);
+    },
+    onDeployedUrls: (urls) => setDeployedUrls(urls),
+    onAgentPause:  (ctx) => { setAgentPaused(true);  setAgentContext(ctx); },  // Task 19
+    onAgentResume: ()    => { setAgentPaused(false); setAgentContext(null); }, // Task 19
+    onPreScan:     (data) => setPreScanData(data),                              // Task 19
+  });
+
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [log]);
+
+  return (
+    <div>
+      <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 22, color: C.ink, marginBottom: 6 }}>Deploying your app…</h2>
+      <p style={{ fontSize: 14, color: C.inkMid, marginBottom: 20, lineHeight: 1.6 }}>This usually takes 3–5 minutes. You can watch what's happening below.</p>
+
+      {/* Task 19: preScan health card */}
+      {preScanData && (
+        <div style={{ background: preScanData.healthy ? C.greenBg : C.amberBg, border: `1px solid ${preScanData.healthy ? C.green : C.amber}33`, borderRadius: 10, padding: '12px 16px', marginBottom: 16, fontSize: 13 }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>{preScanData.healthy ? '✅ Pre-scan passed' : '⚠️ Pre-scan found issues'}</div>
+          {preScanData.issues?.map((iss, i) => <div key={i} style={{ color: C.inkMid }}>{iss}</div>)}
+        </div>
+      )}
+
+      {/* Task 19: AgentChat overlay */}
+      {agentPaused && migrationId && (
+        <AgentChat
+          migrationId={migrationId}
+          context={agentContext}
+          onResolved={() => { setAgentPaused(false); setAgentContext(null); }}
+        />
+      )}
+
+      {/* Log terminal */}
+      <div style={{
+        background: '#0F1117', borderRadius: 10, padding: '14px 16px',
+        height: 260, overflowY: 'auto', fontFamily: 'monospace', fontSize: 12,
+        color: '#C8D3F5', lineHeight: 1.6,
+      }}>
+        {log.length === 0 && <span style={{ color: '#4C5374' }}>Waiting for logs…</span>}
+        {log.map((line, i) => <div key={i}>{line}</div>)}
+        <div ref={logEndRef} />
+      </div>
+
+      <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{
+          width: 10, height: 10, borderRadius: '50%',
+          background: status === 'running' ? C.amber : status === 'done' ? C.green : C.red,
+          animation: status === 'running' ? 'pulse 1.2s ease-in-out infinite' : 'none',
+        }} />
+        <span style={{ fontSize: 13, color: C.inkMid }}>
+          {status === 'running' ? 'Deployment in progress…' : status === 'done' ? 'Deployment complete!' : 'Deployment failed'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Step 4: Done ─────────────────────────────────────────────────────────────
+function StepDone({ deployedUrls }) {
+  const router = useRouter();
+  const urls   = deployedUrls || {};
+
+  return (
+    <div style={{ textAlign: 'center' }}>
+      <div style={{ fontSize: 56, marginBottom: 12 }}>🎉</div>
+      <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 26, color: C.ink, marginBottom: 8 }}>Your app is live!</h2>
+      <p style={{ fontSize: 15, color: C.inkMid, marginBottom: 24, lineHeight: 1.7 }}>Congratulations — your app has been deployed and is now accessible to anyone in the world.</p>
+
+      {Object.keys(urls).length > 0 && (
+        <div style={{ background: C.greenBg, border: `1px solid ${C.green}33`, borderRadius: 12, padding: '16px 20px', marginBottom: 24, textAlign: 'left' }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#065F46', marginBottom: 10 }}>🌐 Your live URLs</div>
+          {urls.frontend && <div style={{ marginBottom: 6 }}><span style={{ fontSize: 12, color: C.inkLight }}>Frontend:</span> <a href={urls.frontend} target="_blank" rel="noreferrer" style={{ color: C.amber, fontWeight: 700, fontSize: 13 }}>{urls.frontend}</a></div>}
+          {urls.backend  && <div style={{ marginBottom: 6 }}><span style={{ fontSize: 12, color: C.inkLight }}>Backend:</span>  <a href={urls.backend}  target="_blank" rel="noreferrer" style={{ color: C.amber, fontWeight: 700, fontSize: 13 }}>{urls.backend}</a></div>}
+          {urls.database && <div>               <span style={{ fontSize: 12, color: C.inkLight }}>Database:</span> <a href={urls.database} target="_blank" rel="noreferrer" style={{ color: C.amber, fontWeight: 700, fontSize: 13 }}>{urls.database}</a></div>}
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => router.push('/dashboard')}
+        style={{ padding: '13px 32px', background: C.amber, color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: 'pointer', boxShadow: '0 4px 14px rgba(217,119,6,.25)' }}
+      >
+        Go to my dashboard →
+      </button>
+    </div>
+  );
+}
+
+// ─── Main wizard ──────────────────────────────────────────────────────────────
+export default function Migrate() {
+  const router = useRouter();
+  const [step, setStep]             = useState(0);
+  const [migrationId, setMigrationId] = useState(null);
+  const [deployedUrls, setDeployedUrls] = useState(null);
+
+  // Restore migration in progress after Stripe redirect
+  useEffect(() => {
+    const mid = router.query.migration_id;
+    if (mid) {
+      setMigrationId(mid);
+      setStep(3);
+    }
+  }, [router.query]);
+
+  const handleStep0 = ({ source, repoUrl, branch }) => {
+    setStep(1);
+  };
+  const handleStep1 = () => setStep(2);
+  const handleStep2 = () => setStep(3);
+  const handleDone  = (status, urls) => {
+    setDeployedUrls(urls);
+    setStep(4);
+  };
+
+  return (
+    <>
+      <Head>
+        <title>Deploy my app — MigrateBot</title>
+        <meta name="description" content="Deploy your app in minutes with MigrateBot" />
+      </Head>
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50%       { opacity: 0.4; }
+        }
+      `}</style>
+
+      <div style={{
+        minHeight: '100vh',
+        background: C.surface,
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+        padding: '40px 16px',
+        fontFamily: 'Inter, -apple-system, sans-serif',
+      }}>
+        <div style={{ width: '100%', maxWidth: 560 }}>
+          {/* Header */}
+          <div style={{ textAlign: 'center', marginBottom: 32 }}>
+            <div style={{ fontSize: 28, marginBottom: 4 }}>⚡</div>
+            <h1 style={{ fontFamily: 'Georgia, serif', fontSize: 26, color: C.ink, margin: 0 }}>MigrateBot</h1>
+            <p style={{ fontSize: 13, color: C.inkLight, marginTop: 4 }}>Deploy your app — no coding skills required</p>
+          </div>
+
+          <div style={{ background: '#fff', borderRadius: 16, border: `1px solid ${C.border}`, padding: '28px 32px', boxShadow: '0 2px 12px rgba(0,0,0,.06)' }}>
+            <StepBar step={step} />
+
+            {step === 0 && <StepSource   onNext={handleStep0} />}
+            {step === 1 && <StepConfigure onNext={handleStep1} onBack={() => setStep(0)} />}
+            {step === 2 && <StepPay      onNext={handleStep2} onBack={() => setStep(1)} />}
+            {step === 3 && migrationId && <StepRunning migrationId={migrationId} onDone={handleDone} />}
+            {step === 4 && <StepDone deployedUrls={deployedUrls} />}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
