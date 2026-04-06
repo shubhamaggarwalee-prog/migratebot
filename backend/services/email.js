@@ -11,6 +11,11 @@
  *            • Live URL(s) prominently displayed
  *            • Direct link to the migration detail page
  *            • Plain-English next steps / recovery instructions
+ *
+ * Task 7: Added sendPaymentConfirmed — a dedicated "payment received, deployment
+ *         starting" email sent by the webhook safety timer. Replaced the
+ *         incorrect sendMigrationComplete call in webhooks.js (which was sending
+ *         a "Your app is live!" message before deployment even started).
  */
 const nodemailer = require('nodemailer');
 
@@ -27,7 +32,7 @@ const transport = nodemailer.createTransport({
 const FROM         = process.env.EMAIL_FROM    || 'MigrateBot <hello@migratebot.io>';
 const FRONTEND_URL = process.env.FRONTEND_URL  || 'https://migratebot.io';
 
-// ─── shared base template ──────────────────────────────────────────────────────────
+// ─── shared base template ──────────────────────────────────────────────────────
 
 function baseHtml(title, bodyHtml) {
   return `
@@ -92,14 +97,79 @@ function baseHtml(title, bodyHtml) {
 </html>`;
 }
 
-// ─── internal send helper ──────────────────────────────────────────────────────────
+// ─── internal send helper ──────────────────────────────────────────────────────
 
 async function send({ to, subject, html }) {
   await transport.sendMail({ from: FROM, to, subject, html });
   return { success: true };
 }
 
-// ─── public API ─────────────────────────────────────────────────────────────────
+// ─── public API ────────────────────────────────────────────────────────────────────
+
+/**
+ * sendPaymentConfirmed  (Task 7)
+ * Sent immediately after Stripe confirms payment — BEFORE deployment starts.
+ * This is NOT a "your app is live" email; it is a receipt + "we're starting now" notice.
+ *
+ * Called by webhooks.js scheduleJobSafetyCheck when the safety timer fires and
+ * auto-triggers a job that the Bull queue missed.
+ *
+ * @param {string} to           - Recipient email
+ * @param {string} repoName     - Human-readable project name / repo URL
+ * @param {string} migrationId  - UUID for the detail-page link
+ * @param {string} [name]       - User display name
+ */
+async function sendPaymentConfirmed(to, repoName, migrationId = '', name = '') {
+  const displayName = name || to.split('@')[0];
+  const detailUrl   = migrationId
+    ? `${FRONTEND_URL}/migrations/${migrationId}`
+    : `${FRONTEND_URL}/dashboard`;
+
+  const html = baseHtml('Payment received — deployment starting', `
+    <h1>Payment confirmed, ${displayName}!</h1>
+    <span class="badge amber">⏳ Deployment starting</span>
+
+    <p>
+      We've received your payment for <strong>${repoName}</strong> and your
+      deployment is now starting. This usually takes <strong>3–5 minutes</strong>.
+    </p>
+
+    <p>
+      You'll get another email the moment your app goes live with the link
+      to your deployed app. You can also watch progress in real time:
+    </p>
+
+    <a class="cta" href="${detailUrl}">Watch deployment progress →</a>
+
+    <div class="box">
+      <div style="font-size:12px;font-weight:700;color:#92400E;margin-bottom:6px">📌 What happens next</div>
+      <div class="steps" style="margin-top:8px">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-text">We analyse your code and set up your database (if needed).</div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-text">Your backend is deployed to Railway and your frontend to Vercel.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-text">We run health checks and send you a final email with your live URLs.</div>
+        </div>
+      </div>
+    </div>
+
+    <p style="font-size:12px;color:#9B958A;margin-top:8px">
+      Questions? Reply to this email — we read everything.
+    </p>
+  `);
+
+  return send({
+    to,
+    subject: `💳 Payment received — deploying ${repoName} now`,
+    html,
+  });
+}
 
 /**
  * sendMigrationComplete
@@ -165,7 +235,7 @@ async function sendMigrationComplete(to, repoName, deployedUrls = {}, migrationI
       </div>
       <div class="step">
         <div class="step-num">2</div>
-        <div class="step-text"><strong>Share it</strong> — copy the link above and send it to anyone you’d like to try it.</div>
+        <div class="step-text"><strong>Share it</strong> — copy the link above and send it to anyone you'd like to try it.</div>
       </div>
       <div class="step">
         <div class="step-num">3</div>
@@ -225,7 +295,7 @@ async function sendMigrationFailed(to, repoName, errorMessage = '', migrationId 
 
     <p>
       Your migration of <strong>${repoName}</strong> ran into a problem
-      and couldn’t finish. <strong>You have not been charged.</strong>
+      and couldn't finish. <strong>You have not been charged.</strong>
       If a payment was taken, a full refund has been issued automatically.
     </p>
 
@@ -261,18 +331,18 @@ async function sendMigrationFailed(to, repoName, errorMessage = '', migrationId 
       </div>
       <div class="step">
         <div class="step-num">4</div>
-        <div class="step-text"><strong>Still stuck?</strong> Reply to this email and we’ll fix it for you — usually within a few hours.</div>
+        <div class="step-text"><strong>Still stuck?</strong> Reply to this email and we'll fix it for you — usually within a few hours.</div>
       </div>
     </div>
 
     <p style="font-size:12px;color:#9B958A;margin-top:20px">
-      Our engineering team has been automatically alerted. You don’t need to do anything right now if you’d prefer to wait.
+      Our engineering team has been automatically alerted. You don't need to do anything right now if you'd prefer to wait.
     </p>
   `);
 
   return send({
     to,
-    subject: `⚠️ Deployment issue with ${repoName} — here’s what to do`,
+    subject: `⚠️ Deployment issue with ${repoName} — here's what to do`,
     html,
   });
 }
@@ -297,7 +367,7 @@ async function sendUpdateCompleteEmail({ to, name, appUrl, filesChanged, commitM
   const success  = outcome === 'ready';
   const warning  = outcome === 'timeout';
   const badgeCls = success ? 'green' : warning ? 'amber' : 'red';
-  const badgeTxt = success ? '✓ Live' : warning ? '⏳ Still deploying' : '✗ Deploy error';
+  const badgeTxt = success ? '✓ Live' : warning ? '⏳ Still deploying' : '✕ Deploy error';
   const title    = success ? `Your update is live, ${name}! 🚀` : `Update deployed — ${outcome}`;
   const html = baseHtml(title, `
     <h1>${title}</h1>
@@ -336,7 +406,7 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
     <h1>Reset your password</h1>
     <p>Someone (hopefully you) requested a password reset for your MigrateBot account.</p>
     <a class="cta" href="${resetUrl}">Reset my password →</a>
-    <p>This link expires in 1 hour. If you didn’t request this, ignore this email.</p>
+    <p>This link expires in 1 hour. If you didn't request this, ignore this email.</p>
   `);
   return send({ to, subject: 'Reset your MigrateBot password', html });
 }
@@ -359,6 +429,7 @@ const sendMigrationCompleteEmail = sendMigrationComplete;
 
 module.exports = {
   sendWelcomeEmail,
+  sendPaymentConfirmed,
   sendMigrationComplete,
   sendMigrationFailed,
   sendMigrationCompleteEmail,     // legacy alias

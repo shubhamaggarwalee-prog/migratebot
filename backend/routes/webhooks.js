@@ -9,15 +9,19 @@
  *        a 60-second safety timer checks whether the job has started.
  *        If still 'paid' after 60 s, auto-triggers the job and passes
  *        the real io instance so socket events reach the frontend.
+ *
+ * Task 7: Safety timer now calls sendPaymentConfirmed (not sendMigrationComplete)
+ *         so the user receives a "payment received, deployment starting" email
+ *         rather than a misleading "Your app is live!" message.
  */
 const express        = require('express');
 const stripe         = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { supabaseAdmin } = require('../utils/supabase');
 const { runMigration }  = require('../services/migrationRunner');
-const { sendMigrationComplete } = require('../services/email');
+const { sendPaymentConfirmed } = require('../services/email');
 const logger         = require('../utils/logger');
 
-// ─── Fix 7: 60-second safety trigger ─────────────────────────────────────────
+// ─── Fix 7: 60-second safety trigger ─────────────────────────────────────────────
 /**
  * After Stripe confirms payment, wait 60 seconds and check if the Bull job
  * has already picked up the migration (status moved away from 'paid').
@@ -69,19 +73,20 @@ function scheduleJobSafetyCheck(migrationId, app) {
         return;
       }
 
-      // Send confirmation email so the user knows payment was received
+      // Task 7: Send a "payment confirmed, deployment starting" email.
+      // sendPaymentConfirmed is a dedicated honest template — it does NOT say
+      // "Your app is live". The live-URL email is sent by migrationRunner when
+      // deployment actually completes.
       try {
         const { data: authData } = await supabaseAdmin.auth.admin.getUserById(migration.user_id);
         const userEmail = authData?.user?.email;
         const userName  = authData?.user?.user_metadata?.name || authData?.user?.user_metadata?.full_name || '';
         if (userEmail) {
-          await sendMigrationComplete(
+          await sendPaymentConfirmed(
             userEmail,
             migration.repo_url || 'your project',
-            { frontend: null, backend: null, database: null },
             migrationId,
             userName,
-            { type: 'payment_confirmed' } // signals "starting" email, not "done"
           );
         }
       } catch (emailErr) {
@@ -109,7 +114,7 @@ function scheduleJobSafetyCheck(migrationId, app) {
   }, 60_000); // 60 seconds
 }
 
-// ─── Router factory ───────────────────────────────────────────────────────────
+// ─── Router factory ────────────────────────────────────────────────────────────────────
 /**
  * Returns an Express router with access to the app instance.
  * Called from server.js as: app.use('/api/webhooks', makeRouter(app))
