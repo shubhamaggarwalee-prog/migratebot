@@ -15,12 +15,16 @@ echo -e "\n${BLUE}━━━━━━━━━━━━━━━━━━━━�
 echo -e "${BLUE}  🚀 MigrateBot One-Click Deployment     ${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
 
-echo "You need 5 API keys:"
+echo "You need 5 API keys + your Railway backend URL:"
 echo "  Supabase: https://app.supabase.com/account/tokens"
 echo "  Stripe:   https://dashboard.stripe.com/apikeys"
 echo "  Railway:  https://railway.app/account/tokens"
 echo "  Vercel:   https://vercel.com/account/tokens"
 echo "  Anthropic:https://console.anthropic.com/account/keys"
+echo ""
+echo "  Railway backend URL — the public domain Railway assigned to your"
+echo "  backend service (e.g. https://migratebot-production.up.railway.app)."
+echo "  Deploy the backend to Railway first, then run this script."
 echo ""
 
 read -sp "Supabase Access Token: " SUPABASE_TOKEN; echo
@@ -28,13 +32,19 @@ read -sp "Stripe Secret Key (sk_test_...): " STRIPE_KEY; echo
 read -sp "Railway API Token: " RAILWAY_TOKEN; echo
 read -sp "Vercel API Token: " VERCEL_TOKEN; echo
 read -sp "Anthropic API Key (sk-ant-...): " ANTHROPIC_KEY; echo
+read -p  "Railway Backend URL (https://...): " RAILWAY_BACKEND_URL; echo
 
-[ -z "$SUPABASE_TOKEN" ] && err "Supabase token required"
-[ -z "$STRIPE_KEY" ]     && err "Stripe key required"
-[ -z "$RAILWAY_TOKEN" ]  && err "Railway token required"
-[ -z "$VERCEL_TOKEN" ]   && err "Vercel token required"
-[ -z "$ANTHROPIC_KEY" ]  && err "Anthropic key required"
-ok "All API keys received"
+[ -z "$SUPABASE_TOKEN" ]      && err "Supabase token required"
+[ -z "$STRIPE_KEY" ]          && err "Stripe key required"
+[ -z "$RAILWAY_TOKEN" ]       && err "Railway token required"
+[ -z "$VERCEL_TOKEN" ]        && err "Vercel token required"
+[ -z "$ANTHROPIC_KEY" ]       && err "Anthropic key required"
+[ -z "$RAILWAY_BACKEND_URL" ] && err "Railway backend URL required"
+
+# Strip trailing slash
+RAILWAY_BACKEND_URL="${RAILWAY_BACKEND_URL%/}"
+
+ok "All inputs received"
 
 # ── SUPABASE ──────────────────────────────────────────────────
 echo -e "\n${BLUE}Step 1: Creating Supabase project...${NC}"
@@ -58,19 +68,36 @@ SUPABASE_URL=$(curl -sf -H "Authorization: Bearer $SUPABASE_TOKEN" "https://api.
 ok "Supabase URL: $SUPABASE_URL"
 
 # ── STRIPE ────────────────────────────────────────────────────
-echo -e "\n${BLUE}Step 2: Creating Stripe products...${NC}"
+echo -e "\n${BLUE}Step 2: Creating Stripe products + webhook...${NC}"
 STRIPE_AUTH=$(python3 -c "import base64; print('Basic ' + base64.b64encode(b':$STRIPE_KEY').decode())")
-STD_ID=$(curl -sf -X POST https://api.stripe.com/v1/products -H "Authorization: $STRIPE_AUTH" -d "name=Standard+Migration" -d "type=service" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
+
+STD_ID=$(curl -sf -X POST https://api.stripe.com/v1/products \
+  -H "Authorization: $STRIPE_AUTH" \
+  -d "name=Standard+Migration" -d "type=service" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
 ok "Standard product: $STD_ID"
-PRO_ID=$(curl -sf -X POST https://api.stripe.com/v1/products -H "Authorization: $STRIPE_AUTH" -d "name=Pro+Migration" -d "type=service" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
+
+PRO_ID=$(curl -sf -X POST https://api.stripe.com/v1/products \
+  -H "Authorization: $STRIPE_AUTH" \
+  -d "name=Pro+Migration" -d "type=service" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
 ok "Pro product: $PRO_ID"
-WH=$(curl -sf -X POST https://api.stripe.com/v1/webhook_endpoints -H "Authorization: $STRIPE_AUTH" \
-  -d "url=https://migratebot-production.up.railway.app/webhooks/stripe" \
+
+# Register the webhook to the correct /api/webhooks/stripe path.
+# All three events that webhooks.js handles are registered:
+#   payment_intent.succeeded    — marks migration paid, triggers job
+#   payment_intent.payment_failed — marks migration payment_failed
+#   charge.refunded             — logged for records
+WEBHOOK_URL="${RAILWAY_BACKEND_URL}/api/webhooks/stripe"
+WH=$(curl -sf -X POST https://api.stripe.com/v1/webhook_endpoints \
+  -H "Authorization: $STRIPE_AUTH" \
+  -d "url=${WEBHOOK_URL}" \
   -d "enabled_events[]=payment_intent.succeeded" \
+  -d "enabled_events[]=payment_intent.payment_failed" \
   -d "enabled_events[]=charge.refunded")
 WH_ID=$(echo "$WH" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
 WH_SECRET=$(echo "$WH" | python3 -c "import sys,json; print(json.load(sys.stdin).get('secret',''))" 2>/dev/null)
-ok "Stripe webhook: $WH_ID"
+ok "Stripe webhook registered → ${WEBHOOK_URL} (${WH_ID})"
 
 # ── GENERATE SECRETS ─────────────────────────────────────────
 echo -e "\n${BLUE}Step 3: Generating secrets...${NC}"
@@ -99,10 +126,9 @@ JWT_EXPIRES_IN=7d
 
 ANTHROPIC_API_KEY=$ANTHROPIC_KEY
 
-# Add after Railway/Vercel deploy:
-# RAILWAY_BACKEND_URL=https://migratebot-production.up.railway.app
-# VERCEL_FRONTEND_URL=https://migratebot.vercel.app
-ENVEF
+RAILWAY_BACKEND_URL=$RAILWAY_BACKEND_URL
+# VERCEL_FRONTEND_URL=https://migratebot.vercel.app  # fill in after Vercel deploy
+ENVEOF
 ok "Saved to .migratebot.env.production"
 
 # ── NEXT STEPS ───────────────────────────────────────────────
@@ -110,15 +136,14 @@ echo -e "\n${BLUE}━━━━━━━━━━━━━━━━━━━━�
 echo -e "${GREEN}✓ Phase 1 Complete! Supabase + Stripe ready.${NC}\n"
 echo "Next steps to finish deployment:"
 echo ""
-echo "  1. Connect GitHub repo to Railway → railway.app"
-echo "     Set env vars from .migratebot.env.production"
-echo "     Railway URL: https://migratebot-production.up.railway.app"
+echo "  1. Set all env vars from .migratebot.env.production on Railway"
+echo "     (Settings → Variables in your Railway backend service)"
 echo ""
 echo "  2. Connect GitHub repo to Vercel → vercel.com"
-echo "     Set NEXT_PUBLIC_API_URL to Railway URL above"
-echo "     Vercel URL: https://migratebot.vercel.app"
+echo "     Root directory: frontend"
+echo "     Set NEXT_PUBLIC_API_URL=$RAILWAY_BACKEND_URL"
 echo ""
-echo "  OR: Visit http://localhost:3000/setup for full web UI automation"
+echo "  OR: Visit $RAILWAY_BACKEND_URL/setup for full web UI automation"
 echo ""
 echo -e "${YELLOW}⚠  Add .migratebot.env.production to .gitignore${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
