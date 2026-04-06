@@ -142,6 +142,9 @@ function GithubPatGuide({ value, onChange }) {
 }
 
 // ─── Step 0: Where is your app? ──────────────────────────────────────────────
+// Max ZIP size accepted before we even touch JSZip (bytes).
+const ZIP_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
+
 function StepSource({ onNext }) {
   const { repoUrl, setRepoUrl, branch, setBranch } = useWizardStore();
   const [source, setSource]       = useState('github');
@@ -159,6 +162,7 @@ function StepSource({ onNext }) {
   const [uploading,    setUploading]    = useState(false);
   const [uploadDone,   setUploadDone]   = useState(false);
   const [uploadMsg,    setUploadMsg]    = useState('');
+  // fix: ref lives at component level — always mounted, never conditionally rendered
   const fileInputRef = useRef();
 
   const SOURCES = [
@@ -202,6 +206,13 @@ function StepSource({ onNext }) {
     setError('');
     setZipFiles([]);
     setZipName(file.name);
+
+    // fix: pre-check size before handing off to JSZip — avoids browser hang on huge files
+    if (file.size > ZIP_MAX_BYTES) {
+      setError(`ZIP file is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum allowed size is 50 MB. Try removing node_modules, .git, or dist before zipping.`);
+      return;
+    }
+
     try {
       const JSZip = (await import('jszip')).default;
       const zip   = await JSZip.loadAsync(file);
@@ -300,7 +311,14 @@ function StepSource({ onNext }) {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
         {SOURCES.map(s => (
-          <button key={s.id} onClick={() => { setSource(s.id); setError(''); setUploadDone(false); }} style={{
+          <button key={s.id} onClick={() => {
+            setSource(s.id);
+            setError('');
+            setUploadDone(false);
+            // fix: clear repoUrl when switching sources so a stale URL from a
+            // previous selection can never leak into the next deployment step
+            setRepoUrl('');
+          }} style={{
             display: 'flex', alignItems: 'center', gap: 16, padding: '16px 18px',
             borderRadius: 12, border: `2px solid ${source === s.id ? C.amber : C.border}`,
             background: source === s.id ? C.amberBg : '#fff',
@@ -360,6 +378,23 @@ function StepSource({ onNext }) {
         </div>
       )}
 
+      {/*
+        fix: the hidden file <input> is rendered at this level — outside the
+        uploadMode === 'zip' conditional — so fileInputRef.current is always
+        a real DOM node by the time the drop-zone's onClick fires.
+      */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".zip"
+        style={{ display: 'none' }}
+        onChange={e => {
+          if (e.target.files[0]) handleZipUpload(e.target.files[0]);
+          // Reset value so the same file can be re-selected after "Remove ZIP"
+          e.target.value = '';
+        }}
+      />
+
       {source === 'paste' && (
         <div>
           {uploadDone ? (
@@ -391,7 +426,20 @@ function StepSource({ onNext }) {
                   { id: 'paste', icon: '📋', label: 'Paste code', sub: 'From Claude or anywhere' },
                   { id: 'zip',   icon: '📦', label: 'Upload a ZIP', sub: 'Your whole project folder' },
                 ].map(m => (
-                  <button key={m.id} type="button" onClick={() => { setUploadMode(m.id); setError(''); setUploadDone(false); }} style={{
+                  <button key={m.id} type="button" onClick={() => {
+                    setUploadMode(m.id);
+                    setError('');
+                    setUploadDone(false);
+                    // fix: clear the OTHER mode's stale data so it can never be
+                    // submitted accidentally after toggling back and forth
+                    if (m.id === 'zip') {
+                      setPasteFile('');
+                      setPasteContent('');
+                    } else {
+                      setZipFiles([]);
+                      setZipName('');
+                    }
+                  }} style={{
                     flex: 1, padding: '10px 8px',
                     background: uploadMode === m.id ? C.amberBg : C.surface,
                     border: `1.5px solid ${uploadMode === m.id ? C.amber : C.border}`,
@@ -485,14 +533,9 @@ function StepSource({ onNext }) {
                   ) : (
                     <div>
                       <div style={{ fontWeight: 700, fontSize: 14, color: C.amberDark, marginBottom: 4 }}>Drop your ZIP here or click to browse</div>
-                      <div style={{ fontSize: 11, color: C.inkMid }}>Upload your whole project as a .zip file</div>
+                      <div style={{ fontSize: 11, color: C.inkMid }}>Max 50 MB · Upload your whole project as a .zip file</div>
                     </div>
                   )}
-                  <input
-                    ref={fileInputRef} type="file" accept=".zip"
-                    style={{ display: 'none' }}
-                    onChange={e => { if (e.target.files[0]) handleZipUpload(e.target.files[0]); }}
-                  />
                 </div>
               )}
 
