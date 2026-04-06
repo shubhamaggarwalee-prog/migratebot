@@ -71,9 +71,9 @@ if (process.env.NODE_ENV === 'production') {
 app.use(sanitizeLogs);
 
 // ─── Raw body for Stripe webhooks (MUST come before express.json) ─────────────
-// Route must exactly match the path registered in app.use('/api/webhooks', ...).
+// Route must exactly match the path where the webhook router is mounted below.
 // Stripe's constructEvent() requires the original raw Buffer — if express.json()
-// runs first it parses the body into an object and the HMAC signature check fails.
+// runs first it parses the body into an object and the HMAC check fails.
 app.use(
   '/api/webhooks/stripe',
   express.raw({ type: 'application/json' }),
@@ -100,7 +100,9 @@ app.use('/api/chat',          require('./routes/chat'));
 app.use('/api/agent',         require('./routes/agentChat'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/health',        require('./routes/health'));
-app.use('/api/webhooks',      require('./routes/webhooks'));
+// webhooks.js exports makeRouter(app) — pass app so the safety-check timer
+// can resolve the live io instance without a circular import.
+app.use('/api/webhooks',      require('./routes/webhooks')(app));
 app.use('/api/2fa',           require('./routes/twoFactor'));
 app.use('/api/password',      require('./routes/passwordReset'));
 app.use('/api/verify-email',  require('./routes/emailVerification'));
