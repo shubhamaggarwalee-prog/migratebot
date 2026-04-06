@@ -12,6 +12,13 @@
  *
  * Task 5: Added 30-second AbortController timeout around agent.chat() so a
  *         hanging Anthropic request cannot hold the HTTP connection open forever.
+ *
+ * Task 8: Replaced .single() on the credentials query with .limit(1) so that
+ *         a user who has multiple Anthropic credentials across different
+ *         migrations doesn't get a PGRST116 "multiple rows" error. We take
+ *         the first row returned instead.
+ *
+ * Task 13: Added stack: err.stack to logger.error for production debuggability.
  */
 const express        = require('express');
 const router         = express.Router();
@@ -33,13 +40,21 @@ router.post('/chat', auth, async (req, res) => {
 
   try {
     // ── 1. Fetch the user's encrypted Anthropic key ────────────────────────────
-    const { data: credRow, error: credErr } = await supabaseAdmin
+    // Task 8: Use .limit(1) instead of .single() so that a user who has stored
+    // Anthropic credentials against more than one migration doesn't cause a
+    // PGRST116 "multiple rows returned" error. The most-specific match
+    // (migration_id + user_id + platform) already makes the result
+    // deterministic; we just take element [0] instead of letting PostgREST
+    // enforce a strict one-row contract.
+    const { data: credRows, error: credErr } = await supabaseAdmin
       .from('credentials')
       .select('encrypted_data')
       .eq('migration_id', migration_id)
       .eq('user_id', req.userId)
       .eq('platform', 'anthropic')
-      .single();
+      .limit(1);
+
+    const credRow = credRows?.[0] ?? null;
 
     if (credErr || !credRow) {
       return res.status(404).json({
@@ -103,7 +118,10 @@ router.post('/chat', auth, async (req, res) => {
     if (err?.status === 401) {
       return res.status(400).json({ error: 'Your Anthropic API key is invalid or expired. Please update it in the wizard.' });
     }
-    logger.error('AgentChat error:', { message: err.message });
+    // Task 13: Include stack trace so production log aggregators (Papertrail,
+    // Datadog, etc.) can pinpoint the exact source line without needing to
+    // reproduce the error locally.
+    logger.error('AgentChat error:', { message: err.message, stack: err.stack });
     res.status(500).json({ error: err.message || 'Something went wrong. Please try again.' });
   }
 });
