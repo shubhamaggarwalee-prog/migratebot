@@ -77,7 +77,9 @@ app.use(
 );
 
 // ─── JSON body parser ────────────────────────────────────────────────────────
-app.use(express.json({ limit: '10mb' }));
+// 50 MB: accommodates large ZIP payloads (files are base64-encoded in JSON).
+// The per-file 500 KB cap in uploadSource.js is the abuse guard.
+app.use(express.json({ limit: '50mb' }));
 
 // ─── Tiered rate limiters ─────────────────────────────────────────────────────
 app.use('/api/auth',     authLimiter);

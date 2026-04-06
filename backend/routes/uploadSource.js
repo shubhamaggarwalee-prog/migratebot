@@ -33,6 +33,12 @@ function slugify(name) {
     .slice(0, 80) || 'my-app';
 }
 
+/** Redact a GitHub PAT so it never appears in logs */
+function redactToken(token) {
+  if (!token || token.length < 8) return '[token]';
+  return token.slice(0, 4) + '…' + token.slice(-4);
+}
+
 /**
  * Create a new GitHub repo via the REST API.
  * Returns { owner, repo, html_url }.
@@ -60,8 +66,10 @@ async function createGithubRepo(token, repoName, description) {
     return createGithubRepo(token, newName, description);
   }
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Could not create GitHub repo: ${err}`);
+    // Scrub token from the raw GitHub error body before re-throwing
+    const raw = await res.text();
+    const safe = raw.replace(token, redactToken(token));
+    throw new Error(`Could not create GitHub repo: ${safe}`);
   }
   const data = await res.json();
   return { owner: data.owner.login, repo: data.name, html_url: data.html_url };
@@ -88,8 +96,9 @@ async function pushFile(token, owner, repo, filePath, content, message) {
     }
   );
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Failed to push ${filePath}: ${err}`);
+    const raw = await res.text();
+    const safe = raw.replace(token, redactToken(token));
+    throw new Error(`Failed to push ${filePath}: ${safe}`);
   }
   return res.json();
 }
@@ -151,8 +160,10 @@ router.post('/', requireAuth, async (req, res) => {
     });
 
   } catch (err) {
-    console.error('[upload-source]', err);
-    return res.status(500).json({ error: err.message || 'Something went wrong. Please try again.' });
+    // Never log the raw error — it may contain the token in a GitHub API response body
+    const safeMsg = err.message ? err.message.replace(githubToken || '', redactToken(githubToken)) : 'Unknown error';
+    console.error('[upload-source]', safeMsg);
+    return res.status(500).json({ error: safeMsg || 'Something went wrong. Please try again.' });
   }
 });
 
