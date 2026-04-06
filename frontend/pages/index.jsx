@@ -247,7 +247,8 @@ export default function Home() {
       {/* Nav */}
       <nav style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1.25rem 2rem', borderBottom: `1px solid ${C.border}`, background: '#fff' }}>
         <span style={{ fontFamily: 'Georgia, serif', fontSize: 20, fontWeight: 700, color: C.ink }}>MigrateBot</span>
-        <div style={{ display: 'flex', gap: 12 }}>
+        <div style={{ display: 'flex', gap: 20, alignItems: 'center' }}>
+          <Link href="/pricing" style={{ fontSize: 14, color: C.inkMid, textDecoration: 'none', fontWeight: 500 }}>Pricing</Link>
           <Link href="/login" style={{ padding: '8px 16px', border: `1px solid ${C.border}`, borderRadius: 8, color: C.ink, textDecoration: 'none', fontSize: 14 }}>Login</Link>
           <Link href="/register" style={{ padding: '8px 16px', background: C.amber, borderRadius: 8, color: '#fff', textDecoration: 'none', fontSize: 14, fontWeight: 600 }}>Get Started</Link>
         </div>
@@ -313,7 +314,8 @@ export default function Home() {
       <section style={{ maxWidth: 700, margin: '0 auto', padding: '3rem 2rem' }}>
         <h2 style={{ textAlign: 'center', fontFamily: 'Georgia, serif', fontSize: 32, color: C.ink, marginBottom: '0.5rem' }}>Simple Pricing</h2>
         <p style={{ textAlign: 'center', color: C.inkMid, fontSize: 14, marginBottom: '2.5rem' }}>
-          Founding member price locked in forever — no subscription, no hidden fees.
+          Founding member price locked in forever — no subscription, no hidden fees.{' '}
+          <Link href="/pricing" style={{ color: C.amber, textDecoration: 'none', fontWeight: 600 }}>See full plan details →</Link>
         </p>
 
         {/* Founding member highlight card */}
@@ -389,6 +391,11 @@ export default function Home() {
           <span>🗑️ Code deleted after migration</span>
           <span>💚 100% money-back guarantee</span>
           <span>🚀 47 founding spots at $50</span>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 20, flexWrap: 'wrap', marginBottom: 6 }}>
+          <Link href="/pricing" style={{ color: C.inkLight, textDecoration: 'none' }}>Pricing</Link>
+          <Link href="/terms" style={{ color: C.inkLight, textDecoration: 'none' }}>Terms of Service</Link>
+          <Link href="/privacy" style={{ color: C.inkLight, textDecoration: 'none' }}>Privacy Policy</Link>
         </div>
         <div>© 2026 MigrateBot · support@migratebot.io</div>
       </footer>
