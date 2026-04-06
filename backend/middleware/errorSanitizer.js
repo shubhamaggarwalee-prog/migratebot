@@ -8,16 +8,24 @@
  *  2. sanitizeLogs     — request-body scrubber. Mutates req.body in place so that
  *                        sensitive fields (tokens, keys, passwords) never appear
  *                        in morgan or any other logging middleware.
+ *
+ * Task 6: Added githubtoken / github_token / githubpat / pat to SENSITIVE_FIELDS
+ *         so the GitHub PAT that arrives in POST /api/upload-source is always
+ *         redacted before it can reach morgan or any other log sink.
  */
 
 const logger = require('../utils/logger');
 
 // Fields whose VALUES must never appear in logs or error responses.
+// Keys are compared with key.toLowerCase() so casing in the request body
+// does not matter (githubToken, GithubToken, githubtoken all match).
 const SENSITIVE_FIELDS = [
   'password', 'password_hash', 'token', 'access_token', 'refresh_token',
   'railway_token', 'vercel_token', 'supabase_key', 'supabase_service_key',
   'stripe_secret', 'secret', 'api_key', 'apikey', 'authorization',
   'jwt', 'session', 'cookie',
+  // GitHub PAT — arrives as githubToken from the upload-source route
+  'githubtoken', 'github_token', 'githubpat', 'pat',
 ];
 
 /**
