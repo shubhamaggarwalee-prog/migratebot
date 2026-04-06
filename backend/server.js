@@ -112,6 +112,7 @@ app.use('/api/upload-source', require('./routes/uploadSource'));
 app.use('/api/update-deploy', require('./routes/updateDeploy'));
 app.use('/api/app-health',    require('./routes/appHealth'));
 app.use('/api/receipt',       require('./routes/receipt'));
+app.use('/api/admin',         require('./routes/admin'));
 
 // ─── 404 handler ─────────────────────────────────────────────────────────────
 app.use((req, res) => {
