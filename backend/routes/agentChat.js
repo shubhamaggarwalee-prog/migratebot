@@ -9,6 +9,9 @@
  *
  * Body:    { migration_id: string, messages: [{ role, content }], context?: object }
  * Returns: { reply: string, resolved: boolean, skipStep: boolean }
+ *
+ * Task 5: Added 30-second AbortController timeout around agent.chat() so a
+ *         hanging Anthropic request cannot hold the HTTP connection open forever.
  */
 const express        = require('express');
 const router         = express.Router();
@@ -17,6 +20,8 @@ const MigrationAgent = require('../services/migrationAgent');
 const { decrypt }    = require('../utils/encryption');
 const { supabaseAdmin } = require('../utils/database');
 const logger         = require('../utils/logger');
+
+const AGENT_CHAT_TIMEOUT_MS = 30_000; // 30 seconds
 
 // POST /api/agent/chat
 router.post('/chat', auth, async (req, res) => {
@@ -71,10 +76,24 @@ router.post('/chat', auth, async (req, res) => {
       explanation: context.explanation || null,
     };
 
-    // ── 4. Call agent.chat() ────────────────────────────────────────────────────
-    // Pass null for io — the agent doesn't need to broadcast in the chat route
-    const agent  = new MigrationAgent(anthropicKey, null, migration_id);
-    const result = await agent.chat(messages, migrationContext);
+    // ── 4. Call agent.chat() with a hard 30-second timeout ─────────────────────
+    // Without this, a stalled Anthropic request holds the HTTP connection open
+    // indefinitely, exhausting the Node.js connection pool under load.
+    const agent      = new MigrationAgent(anthropicKey, null, migration_id);
+    const controller = new AbortController();
+    const timer      = setTimeout(() => controller.abort(), AGENT_CHAT_TIMEOUT_MS);
+
+    let result;
+    try {
+      result = await agent.chat(messages, migrationContext, { signal: controller.signal });
+    } catch (chatErr) {
+      if (chatErr.name === 'AbortError' || controller.signal.aborted) {
+        return res.status(504).json({ error: 'The AI assistant took too long to respond. Please try again.' });
+      }
+      throw chatErr;
+    } finally {
+      clearTimeout(timer);
+    }
 
     logger.info(`AgentChat — migration=${migration_id} user=${req.userId} resolved=${result.resolved} skip=${result.skipStep}`);
 
