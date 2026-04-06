@@ -12,6 +12,7 @@ require('dotenv').config();
 
 const logger = require('./utils/logger');
 const { sanitizeErrors, sanitizeLogs } = require('./middleware/errorSanitizer');
+const { initQueue } = require('./utils/queue');
 
 // ─── Rate-limit factories ─────────────────────────────────────────────────────
 const rateLimit = require('./middleware/rateLimit');
@@ -129,8 +130,12 @@ io.on('connection', socket => {
 // ─── Start (skip when required by tests) ────────────────────────────────────
 if (require.main === module) {
   const PORT = process.env.PORT || 4000;
-  server.listen(PORT, () => {
+  server.listen(PORT, async () => {
     logger.info(`MigrateBot backend running on :${PORT} [${process.env.NODE_ENV || 'development'}]`);
+    // Initialise Bull queue after the server is up so a Redis failure
+    // degrades gracefully (migrations return 503) rather than preventing
+    // the server from starting at all.
+    await initQueue(io);
   });
 }
 
