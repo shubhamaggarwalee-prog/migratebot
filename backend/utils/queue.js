@@ -13,9 +13,9 @@
  *    undefined, so addMigrationJob() would throw on every migration attempt.
  *    server.js now calls initQueue(io) in the listen() callback.
  */
-const Bull          = require('bull');
+const Bull            = require('bull');
 const { runMigration } = require('../services/migrationRunner');
-const logger        = require('./logger');
+const logger          = require('./logger');
 
 let migrationQueue = null;
 
@@ -23,6 +23,12 @@ let migrationQueue = null;
  * Initialise the Bull queue and wire up event handlers.
  * Called once from server.js after the HTTP server starts listening.
  * Safe to call when REDIS_URL is absent — logs a warning and returns null.
+ *
+ * Note on Redis options (Bull v4 + ioredis):
+ * Bull uses blocking commands on its internal bclient/subscriber connections.
+ * To avoid connection hangs and to comply with Bull's safety checks, we must
+ * explicitly set maxRetriesPerRequest to null and disable the ready check.
+ * See: https://github.com/OptimalBits/bull/issues/2186
  *
  * @param {import('socket.io').Server} io
  * @returns {Bull.Queue|null}
@@ -41,8 +47,10 @@ async function initQueue(io) {
       redis: {
         // Fail fast rather than hanging indefinitely if Redis is unreachable
         connectTimeout: 5000,
-        maxRetriesPerRequest: 3,
-        enableReadyCheck: true,
+        // Required for Bull + ioredis so blocking commands work reliably.
+        // Setting these to truthy values causes "MISSING_REDIS_OPTS" crashes.
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
       },
     });
 
@@ -93,7 +101,7 @@ async function addMigrationJob(migration) {
   }
   const job = await migrationQueue.add(
     { migration },
-    { attempts: 3, backoff: { type: 'exponential', delay: 5000 } }
+    { attempts: 3, backoff: { type: 'exponential', delay: 5000 } },
   );
   return { queued: true, jobId: job.id };
 }
