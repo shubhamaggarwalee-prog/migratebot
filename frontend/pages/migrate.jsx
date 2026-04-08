@@ -241,8 +241,8 @@ function StepSource({ onNext }) {
 
     try {
       const JSZip =
-        (await import('https://esm.sh/jszip@3.10.1')).default ||
-        (await import('https://esm.sh/jszip@3.10.1'));
+        (await import('jszip')).default ||
+        (await import('jszip'));
 
       const zip = await JSZip.loadAsync(file);
       const entries = [];
