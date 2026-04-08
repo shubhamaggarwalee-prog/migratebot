@@ -11,11 +11,17 @@
  * Task 10: GithubPatGuide token validation now requires a ghp_ or github_pat_
  *          prefix instead of length > 10, so "✓ Token looks good" is only
  *          shown for strings that actually look like a GitHub PAT.
+ *
+ * Fix (StepPay): replaced `import { migrations } from '../lib/api'` with the
+ * default `api` export. `migrations` was never a named export — calling
+ * migrations.createMigration() crashed with "Cannot read properties of
+ * undefined". Now uses api.post('/api/migrations', …) which aligns with the
+ * actual api.js contract.
  */
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
-import { migrations } from '../lib/api';
+import api from '../lib/api';
 import { useWizardStore } from '../lib/store';
 import { useMigrationSocket } from '../hooks/useSocket';
 import Term from '../components/Term';
@@ -744,7 +750,9 @@ function StepPay({ onNext, onBack }) {
     setLoading(true);
     setError('');
     try {
-      const result = await migrations.createMigration({
+      // Fix: api is the default export from lib/api.js — there is no named
+      // `migrations` export. Use api.post() which attaches the JWT automatically.
+      const result = await api.post('/api/migrations', {
         repoUrl,
         source: 'wizard',
       });
